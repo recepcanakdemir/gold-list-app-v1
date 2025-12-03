@@ -17,10 +17,41 @@ import {
   useWordsCountByPage,
   useUpdateNotebook,
   useDeleteNotebook,
-  useReviewWords
+  useReviewWords,
+  useProfile
 } from '../../lib/database-hooks';
 import { useCurrentTime, formatDate, addDays, daysBetween } from '../../lib/time-provider';
 
+// Helper function to validate streak based on last activity
+function calculateDisplayStreak(profile: any, currentTime: Date) {
+  if (!profile?.last_activity_date) {
+    // First time user or no activity recorded
+    return { streak: profile?.current_streak || 0, status: 'completed' };
+  }
+  
+  // Normalize both dates to UTC midnight timestamps for pure day comparison
+  const d1 = new Date(profile.last_activity_date);
+  const utc1 = Date.UTC(d1.getFullYear(), d1.getMonth(), d1.getDate());
+  
+  const d2 = new Date(currentTime);
+  const utc2 = Date.UTC(d2.getFullYear(), d2.getMonth(), d2.getDate());
+  
+  const diffDays = Math.floor((utc2 - utc1) / (1000 * 60 * 60 * 24));
+  
+  // Three-state streak logic based on calendar days:
+  if (diffDays === 0) {
+    // Activity done today → Show streak (completed, safe)
+    return { streak: profile.current_streak || 0, status: 'completed' };
+  }
+  
+  if (diffDays === 1) {
+    // Activity done yesterday → Show streak (pending, needs action today)
+    return { streak: profile.current_streak || 0, status: 'pending' };
+  }
+  
+  // diffDays >= 2: Activity done before yesterday → Show 0 (broken, missed yesterday)
+  return { streak: 0, status: 'broken' };
+}
 
 interface RoadmapItem {
   isGhost?: boolean;
@@ -118,8 +149,14 @@ export default function NotebookDetailScreen() {
   const { data: pageNumbers, isLoading: pageNumbersLoading } = usePageNumbers(id as string);
   const { data: wordsCount } = useWordsCountByPage(id as string);
   const { data: reviewWords } = useReviewWords(id as string, currentTime);
+  const { data: profile } = useProfile();
   const updateNotebook = useUpdateNotebook();
   const deleteNotebook = useDeleteNotebook();
+  
+  // Calculate display streak with three-state logic
+  const streakInfo = calculateDisplayStreak(profile, currentTime);
+  const displayStreak = streakInfo.streak;
+  const streakStatus = streakInfo.status;
 
   // Day-by-Day Progression: 1 page = 1 day with word count coloring
   const roadmapItems = useMemo((): RoadmapItem[] => {
@@ -346,7 +383,13 @@ export default function NotebookDetailScreen() {
           <Text style={styles.headerTitle}>{notebook.name}</Text>
         </View>
         <View style={styles.streakContainer}>
-          <Text style={styles.streakText}>🔥 0</Text>
+          <Text style={[
+            styles.streakText, 
+            streakStatus === 'pending' && styles.pendingStreakText,
+            streakStatus === 'broken' && styles.brokenStreakText
+          ]}>
+            {streakStatus === 'broken' ? '💔' : '🔥'} {displayStreak}
+          </Text>
         </View>
         <TouchableOpacity onPress={handleOptionsMenu}>
           <Ionicons name="ellipsis-vertical" size={24} color="#333" />
@@ -566,6 +609,14 @@ const styles = StyleSheet.create({
   streakText: {
     fontSize: 16,
     fontWeight: '600',
+  },
+  brokenStreakText: {
+    color: '#999',
+    opacity: 0.7,
+  },
+  pendingStreakText: {
+    color: '#999',
+    opacity: 0.6,
   },
   flagEmoji: {
     fontSize: 20,

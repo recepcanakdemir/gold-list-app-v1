@@ -4,6 +4,7 @@ import { Session } from '@supabase/supabase-js'
 import { PersistProvider } from '../lib/query-client'
 import { TimeProvider } from '../lib/time-provider'
 import { supabase } from '../lib/supabase'
+import { initializeNotifications } from '../lib/notifications'
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
@@ -22,6 +23,13 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session)
       setIsLoading(false)
+      
+      // Initialize notifications when user signs in
+      if (session) {
+        initializeNotifications().catch(err => 
+          console.warn('Failed to initialize notifications:', err)
+        )
+      }
     })
 
     return () => subscription.unsubscribe()

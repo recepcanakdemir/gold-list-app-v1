@@ -7,6 +7,37 @@ import Svg, { Circle } from 'react-native-svg';
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
+// Helper function to validate streak based on last activity
+function calculateDisplayStreak(profile: any, currentTime: Date) {
+  if (!profile?.last_activity_date) {
+    // First time user or no activity recorded
+    return { streak: profile?.current_streak || 0, status: 'completed' };
+  }
+  
+  // Normalize both dates to UTC midnight timestamps for pure day comparison
+  const d1 = new Date(profile.last_activity_date);
+  const utc1 = Date.UTC(d1.getFullYear(), d1.getMonth(), d1.getDate());
+  
+  const d2 = new Date(currentTime);
+  const utc2 = Date.UTC(d2.getFullYear(), d2.getMonth(), d2.getDate());
+  
+  const diffDays = Math.floor((utc2 - utc1) / (1000 * 60 * 60 * 24));
+  
+  // Three-state streak logic based on calendar days:
+  if (diffDays === 0) {
+    // Activity done today → Show streak (completed, safe)
+    return { streak: profile.current_streak || 0, status: 'completed' };
+  }
+  
+  if (diffDays === 1) {
+    // Activity done yesterday → Show streak (pending, needs action today)
+    return { streak: profile.current_streak || 0, status: 'pending' };
+  }
+  
+  // diffDays >= 2: Activity done before yesterday → Show 0 (broken, missed yesterday)
+  return { streak: 0, status: 'broken' };
+}
+
 interface ModernCircleProgressProps {
   percentage: number;
   color: string;
@@ -207,7 +238,11 @@ export default function DashboardScreen() {
   // Real data from RPC function
   const wordsAddedPercentage = dashboardStats?.words_added_percentage || 0;
   const masteryRatePercentage = dashboardStats?.mastery_rate_percentage || 0;
-  const currentStreak = profile?.current_streak || 0;
+  
+  // Calculate display streak with three-state logic
+  const streakInfo = calculateDisplayStreak(profile, currentTime);
+  const currentStreak = streakInfo.streak;
+  const streakStatus = streakInfo.status;
 
   // Determine colors based on Goldlist performance
   const getMasteryColor = (percentage: number) => {
@@ -241,7 +276,13 @@ export default function DashboardScreen() {
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Dashboard</Text>
         <View style={styles.streakContainer}>
-          <Text style={styles.streakText}>🔥 {currentStreak}</Text>
+          <Text style={[
+            styles.streakText, 
+            streakStatus === 'pending' && styles.pendingStreakText,
+            streakStatus === 'broken' && styles.brokenStreakText
+          ]}>
+            {streakStatus === 'broken' ? '💔' : '🔥'} {currentStreak}
+          </Text>
         </View>
       </View>
       
@@ -331,8 +372,12 @@ export default function DashboardScreen() {
         {/* Additional Stats */}
         <View style={styles.additionalStats}>
           <View style={styles.statItem}>
-            <Text style={styles.statIcon}>🔥</Text>
-            <Text style={styles.statNumber}>{currentStreak}</Text>
+            <Text style={styles.statIcon}>{streakStatus === 'broken' ? '💔' : '🔥'}</Text>
+            <Text style={[
+              styles.statNumber, 
+              streakStatus === 'pending' && styles.pendingStreakText,
+              streakStatus === 'broken' && styles.brokenStreakText
+            ]}>{currentStreak}</Text>
             <Text style={styles.statLabel}>Current Streak</Text>
           </View>
           <View style={styles.statItem}>
@@ -416,6 +461,14 @@ const styles = StyleSheet.create({
   streakText: {
     fontSize: 16,
     fontWeight: '600',
+  },
+  brokenStreakText: {
+    color: '#999',
+    opacity: 0.7,
+  },
+  pendingStreakText: {
+    color: '#999',
+    opacity: 0.6,
   },
   section: {
     backgroundColor: 'white',

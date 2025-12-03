@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useMemo } from 'react'
 import { supabase } from './supabase'
 import { addDays, useCurrentTime, daysBetween } from './time-provider'
+import { scheduleNextReviewNotification } from './notifications'
 
 // Types based on our database schema
 export interface Profile {
@@ -22,6 +23,8 @@ export interface Notebook {
   words_per_page_limit: number
   is_active: boolean
   created_at: string
+  target_language: string
+  language_level: string
 }
 
 export interface Page {
@@ -155,12 +158,30 @@ export function useWords(pageId: string) {
   })
 }
 
+// Helper function to get language level descriptions
+export function getLanguageLevelDescription(level: string): string {
+  const descriptions: { [key: string]: string } = {
+    'A1': 'Beginner',
+    'A2': 'Elementary', 
+    'B1': 'Intermediate',
+    'B2': 'Upper Intermediate',
+    'C1': 'Advanced',
+    'C2': 'Proficient'
+  };
+  return descriptions[level] || 'Elementary';
+}
+
 // Mutations for creating data
 export function useCreateNotebook() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: async (notebook: { name: string; words_per_page_limit?: number }) => {
+    mutationFn: async (notebook: { 
+      name: string; 
+      words_per_page_limit?: number;
+      target_language?: string;
+      language_level?: string;
+    }) => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('No authenticated user')
 
@@ -170,6 +191,8 @@ export function useCreateNotebook() {
           user_id: user.id,
           name: notebook.name,
           words_per_page_limit: notebook.words_per_page_limit || 20,
+          target_language: notebook.target_language || 'English',
+          language_level: notebook.language_level || 'A2',
           is_active: true,
         })
         .select()
@@ -285,6 +308,7 @@ export function useCreateWord() {
       queryClient.invalidateQueries({ queryKey: ['words', data.page_id] })
       queryClient.invalidateQueries({ queryKey: ['pageNumbers'] })
       queryClient.invalidateQueries({ queryKey: ['activityLog'] }) // Refresh activity heatmap
+      queryClient.invalidateQueries({ queryKey: ['profile'] }) // Refresh streak counter
       
       // Get notebook_id to invalidate notebook stats
       const { data: pageData } = await supabase
@@ -296,6 +320,11 @@ export function useCreateWord() {
       if (pageData) {
         queryClient.invalidateQueries({ queryKey: ['notebookStats', pageData.notebook_id] })
       }
+
+      // Schedule next review notification
+      scheduleNextReviewNotification().catch(err => 
+        console.warn('Failed to schedule notification after word creation:', err)
+      )
     },
   })
 }
@@ -378,6 +407,12 @@ export function useCreateWordOptimistic() {
       queryClient.invalidateQueries({ queryKey: ['wordsCount', data.page.notebook_id] })
       queryClient.invalidateQueries({ queryKey: ['notebookStats', data.page.notebook_id] })
       queryClient.invalidateQueries({ queryKey: ['activityLog'] }) // Refresh activity heatmap
+      queryClient.invalidateQueries({ queryKey: ['profile'] }) // Refresh streak counter
+
+      // Schedule next review notification
+      scheduleNextReviewNotification().catch(err => 
+        console.warn('Failed to schedule notification after optimistic word creation:', err)
+      )
     },
     onError: (error) => {
       console.error('Failed to save word:', error)
@@ -570,6 +605,11 @@ export interface DashboardStats {
   mastery_rate_percentage: number
 }
 
+export interface DailyWordCount {
+  date: Date
+  count: number
+}
+
 export function useDashboardStats(period: 'Week' | 'Month') {
   const { currentTime } = useCurrentTime() // Use TimeProvider instead of new Date()
   
@@ -708,6 +748,7 @@ export function useUpdateWordReview() {
       // Invalidate review words queries
       queryClient.invalidateQueries({ queryKey: ['reviewWords'] })
       queryClient.invalidateQueries({ queryKey: ['words', data.page_id] })
+      queryClient.invalidateQueries({ queryKey: ['profile'] }) // Refresh streak counter
       
       // Get notebook_id to invalidate notebook stats (for mastered count updates)
       const { data: pageData } = await supabase
@@ -719,6 +760,69 @@ export function useUpdateWordReview() {
       if (pageData) {
         queryClient.invalidateQueries({ queryKey: ['notebookStats', pageData.notebook_id] })
       }
+
+      // Schedule next review notification
+      scheduleNextReviewNotification().catch(err => 
+        console.warn('Failed to schedule notification after word review:', err)
+      )
     },
+  })
+}
+
+// Weekly word counts for progress strip
+export function useWeeklyWordCounts() {
+  const { currentTime } = useCurrentTime()
+  
+  return useQuery({
+    queryKey: ['weeklyWordCounts', currentTime.toDateString()],
+    queryFn: async (): Promise<DailyWordCount[]> => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) throw new Error('No authenticated user')
+
+      // Calculate the last 7 days ending with today (currentTime)
+      const endDate = new Date(currentTime)
+      const startDate = new Date(currentTime)
+      startDate.setDate(startDate.getDate() - 6) // 6 days back + today = 7 days total
+
+      // Format dates as YYYY-MM-DD for PostgreSQL
+      const startDateStr = startDate.toISOString().split('T')[0]
+      const endDateStr = endDate.toISOString().split('T')[0]
+
+      const { data, error } = await supabase.rpc('get_daily_word_counts', {
+        user_uuid: user.id,
+        start_date: startDateStr,
+        end_date: endDateStr
+      })
+
+      if (error) throw error
+
+      // Fill gaps for missing days (days with 0 words)
+      const result: DailyWordCount[] = []
+      const dbData = data as { date: string; count: number }[]
+
+      for (let i = 0; i < 7; i++) {
+        const currentDay = new Date(startDate.getTime()) // Use getTime() for reliable Date creation
+        currentDay.setDate(startDate.getDate() + i)
+        
+        const dateStr = currentDay.toISOString().split('T')[0]
+        const foundData = dbData.find(row => row.date === dateStr)
+        
+        // Validate the Date object before adding to result
+        const resultDate = new Date(currentDay.getTime())
+        if (isNaN(resultDate.getTime())) {
+          console.warn('Invalid date created for weekly progress:', currentDay)
+          continue; // Skip invalid dates
+        }
+        
+        result.push({
+          date: resultDate,
+          count: foundData ? foundData.count : 0
+        })
+      }
+
+      return result
+    },
+    staleTime: 1000 * 60 * 5, // 5 minutes cache
+    refetchOnWindowFocus: false,
   })
 }

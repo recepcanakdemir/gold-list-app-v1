@@ -11,9 +11,10 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useNotebook, useCreateWordOptimistic, useWordsCountByPage } from '../../../lib/database-hooks';
+import { useNotebook, useCreateWordOptimistic, useWordsCountByPage, useProfile } from '../../../lib/database-hooks';
 import { useIsMutating } from '@tanstack/react-query';
 import { useCurrentTime, formatDate, addDays } from '../../../lib/time-provider';
+import { translateTerm, generateExample, getLanguagesFromNotebook } from '../../../lib/ai-helper';
 
 const WORD_TYPES = ['noun', 'verb', 'adjective', 'adverb', 'other'] as const;
 type WordType = typeof WORD_TYPES[number];
@@ -32,8 +33,13 @@ export default function AddWordsScreen() {
   
   const { data: notebook, isLoading: notebookLoading } = useNotebook(id as string);
   const { data: wordsCount } = useWordsCountByPage(id as string);
+  const { data: profile } = useProfile();
   const createWordOptimistic = useCreateWordOptimistic();
   const isMutating = useIsMutating();
+  
+  // AI functionality states
+  const [isTranslating, setIsTranslating] = useState(false);
+  const [isGeneratingExample, setIsGeneratingExample] = useState(false);
   
   // View switching state management
   const [viewMode, setViewMode] = useState<'input' | 'summary'>('input');
@@ -154,6 +160,55 @@ export default function AddWordsScreen() {
     router.back();
   };
 
+  // AI handler functions
+  const handleTranslate = async () => {
+    if (!currentWord.term.trim()) {
+      Alert.alert('Error', 'Please enter a term first');
+      return;
+    }
+
+    if (!notebook) {
+      Alert.alert('Error', 'Notebook not loaded. Please try again.');
+      return;
+    }
+
+    setIsTranslating(true);
+    try {
+      const { targetLang, nativeLang, languageLevel } = getLanguagesFromNotebook(notebook);
+      const translation = await translateTerm(currentWord.term, targetLang, nativeLang, languageLevel);
+      handleInputChange('definition', translation);
+    } catch (error) {
+      Alert.alert('Translation Error', (error as Error).message || 'Failed to translate');
+    } finally {
+      setIsTranslating(false);
+    }
+  };
+
+  const handleGenerateExample = async () => {
+    if (!currentWord.term.trim()) {
+      Alert.alert('Error', 'Please enter a term first');
+      return;
+    }
+
+    if (!notebook) {
+      Alert.alert('Error', 'Notebook not loaded. Please try again.');
+      return;
+    }
+
+    setIsGeneratingExample(true);
+    try {
+      const { targetLang, nativeLang, languageLevel } = getLanguagesFromNotebook(notebook);
+      // Clear existing example first to allow multiple generations
+      handleInputChange('example', '');
+      const example = await generateExample(currentWord.term, targetLang, nativeLang, languageLevel);
+      handleInputChange('example', example);
+    } catch (error) {
+      Alert.alert('Example Generation Error', (error as Error).message || 'Failed to generate example');
+    } finally {
+      setIsGeneratingExample(false);
+    }
+  };
+
   if (notebookLoading) {
     return (
       <SafeAreaView style={styles.container}>
@@ -235,7 +290,23 @@ export default function AddWordsScreen() {
             />
 
             {/* Definition Input */}
-            <Text style={styles.sectionTitle}>Definition *</Text>
+            <View style={styles.inputSection}>
+              <Text style={styles.sectionTitle}>Definition *</Text>
+              <TouchableOpacity 
+                style={[styles.aiButton, isTranslating && styles.aiButtonLoading]}
+                onPress={handleTranslate}
+                disabled={isTranslating || !currentWord.term.trim()}
+              >
+                {isTranslating ? (
+                  <Ionicons name="sync" size={16} color="#FFA500" />
+                ) : (
+                  <Ionicons name="sparkles" size={16} color="#FFA500" />
+                )}
+                <Text style={styles.aiButtonText}>
+                  {isTranslating ? 'Translating...' : 'Translate'}
+                </Text>
+              </TouchableOpacity>
+            </View>
             <TextInput
               style={[styles.input, styles.textArea]}
               placeholder="Enter the definition"
@@ -246,7 +317,23 @@ export default function AddWordsScreen() {
             />
 
             {/* Example Input */}
-            <Text style={styles.sectionTitle}>Example (Optional)</Text>
+            <View style={styles.inputSection}>
+              <Text style={styles.sectionTitle}>Example (Optional)</Text>
+              <TouchableOpacity 
+                style={[styles.aiButton, isGeneratingExample && styles.aiButtonLoading]}
+                onPress={handleGenerateExample}
+                disabled={isGeneratingExample || !currentWord.term.trim()}
+              >
+                {isGeneratingExample ? (
+                  <Ionicons name="sync" size={16} color="#FFA500" />
+                ) : (
+                  <Ionicons name="sparkles" size={16} color="#FFA500" />
+                )}
+                <Text style={styles.aiButtonText}>
+                  {isGeneratingExample ? 'Generating...' : 'Example'}
+                </Text>
+              </TouchableOpacity>
+            </View>
             <TextInput
               style={[styles.input, styles.textArea]}
               placeholder="Enter an example sentence"
@@ -556,5 +643,32 @@ const styles = StyleSheet.create({
   },
   closeButtonTextDisabled: {
     color: '#999',
+  },
+  // AI button styles
+  inputSection: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  aiButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: '#FFF4E6',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#FFA500',
+  },
+  aiButtonLoading: {
+    backgroundColor: '#F0F0F0',
+    borderColor: '#CCC',
+  },
+  aiButtonText: {
+    fontSize: 14,
+    color: '#FFA500',
+    fontWeight: '600',
+    marginLeft: 6,
   },
 });
