@@ -7,17 +7,28 @@ import {
   TouchableOpacity,
   Alert,
   ScrollView,
-  SafeAreaView,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useNotebook, useCreateWordOptimistic, useWordsCountByPage, useProfile } from '../../../lib/database-hooks';
+import { useSubscription, useWordLimitCheck } from '../../../lib/revenuecat';
+import * as StoreReview from 'expo-store-review';
 import { useIsMutating } from '@tanstack/react-query';
 import { useCurrentTime, formatDate, addDays } from '../../../lib/time-provider';
 import { translateTerm, generateExample, getLanguagesFromNotebook } from '../../../lib/ai-helper';
+import { Colors, Spacing, BorderRadius, Typography, Effects3D, CommonStyles, ButtonStyles } from '../../../styles/theme';
+import { Header } from '../../../components/Header';
 
-const WORD_TYPES = ['noun', 'verb', 'adjective', 'adverb', 'other'] as const;
-type WordType = typeof WORD_TYPES[number];
+const WORD_TYPES = [
+  { value: 'noun', label: 'Noun' },
+  { value: 'verb', label: 'Verb' },
+  { value: 'adjective', label: 'Adj' },
+  { value: 'adverb', label: 'Adv' },
+  { value: 'other', label: 'Other' }
+] as const;
+type WordType = typeof WORD_TYPES[number]['value'];
 
 interface WordData {
   term: string;
@@ -34,6 +45,8 @@ export default function AddWordsScreen() {
   const { data: notebook, isLoading: notebookLoading } = useNotebook(id as string);
   const { data: wordsCount } = useWordsCountByPage(id as string);
   const { data: profile } = useProfile();
+  const { isProUser } = useSubscription();
+  const { checkCanAddWord } = useWordLimitCheck();
   const createWordOptimistic = useCreateWordOptimistic();
   const isMutating = useIsMutating();
   
@@ -90,6 +103,21 @@ export default function AddWordsScreen() {
     }
   }, [notebook, wordsCount, pageNumber]);
 
+  // Proactive word limit check on component mount
+  useEffect(() => {
+    const { canAdd } = checkCanAddWord()
+    if (!canAdd) {
+      Alert.alert(
+        "Limit Reached 🔒",
+        "You have used your free 300 words. Upgrade to continue adding.",
+        [
+          { text: "Cancel", style: "cancel", onPress: () => router.back() },
+          { text: "Upgrade", onPress: () => router.push('/paywall') }
+        ]
+      )
+    }
+  }, [checkCanAddWord])
+
   const handleInputChange = (field: keyof WordData, value: string) => {
     setCurrentWord(prev => ({ ...prev, [field]: value }));
   };
@@ -99,6 +127,20 @@ export default function AddWordsScreen() {
   };
 
   const handleNext = () => {
+    // Check word limit before any processing
+    const { canAdd, message } = checkCanAddWord()
+    if (!canAdd) {
+      Alert.alert(
+        "Limit Reached 🔒",
+        message || "You've reached the free word limit. Upgrade for unlimited words!",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Upgrade", onPress: () => router.push('/paywall') }
+        ]
+      )
+      return // Stop execution
+    }
+
     if (!currentWord.term.trim() || !currentWord.definition.trim()) {
       Alert.alert('Missing Information', 'Please enter both term and definition');
       return;
@@ -107,6 +149,10 @@ export default function AddWordsScreen() {
     // Add to session tracking and optimistic UI update
     setSessionWords(prev => [...prev, currentWord]);
     setLocalWords(prev => [...prev, currentWord]);
+    
+    // Calculate new total count BEFORE resetting currentWord for win-moment review
+    const newTotalCount = (initialDbCount || 0) + localWords.length + 1;
+    
     setCurrentWord({
       term: '',
       definition: '',
@@ -129,9 +175,37 @@ export default function AddWordsScreen() {
         },
       },
       {
+        onSuccess: async () => {
+          // Check if this is the 5th word milestone for win-moment review
+          if (newTotalCount === 5) {
+            try {
+              if (await StoreReview.hasAction()) {
+                // Slight delay for better UX after successful save
+                setTimeout(async () => {
+                  await StoreReview.requestReview();
+                }, 1000);
+              }
+            } catch (error) {
+              console.log('Review request failed:', error);
+            }
+          }
+        },
         onError: (error) => {
-          Alert.alert('Save Error', 'Failed to save word. Please check your connection and try again.');
-          console.error('Word save error:', error);
+          // Check if the error is the specific limit error
+          if (error.message === 'WORD_LIMIT_REACHED' || (error as any).code === 'WORD_LIMIT_REACHED') {
+            Alert.alert(
+              "Limit Reached 🔒",
+              "You have reached the free word limit. Upgrade for unlimited words!",
+              [
+                { text: "Cancel", style: "cancel" },
+                { text: "Upgrade", onPress: () => router.push('/paywall') }
+              ]
+            );
+          } else {
+            // Handle other real errors
+            Alert.alert('Save Error', 'Failed to save word. Please check your connection and try again.');
+            console.error('Word save error:', error);
+          }
         },
       }
     );
@@ -162,6 +236,19 @@ export default function AddWordsScreen() {
 
   // AI handler functions
   const handleTranslate = async () => {
+    // Pro feature guard
+    if (!isProUser) {
+      Alert.alert(
+        "Pro Feature 👑",
+        "AI Translation is available only for Pro members.",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Upgrade", onPress: () => router.push('/paywall') }
+        ]
+      );
+      return;
+    }
+
     if (!currentWord.term.trim()) {
       Alert.alert('Error', 'Please enter a term first');
       return;
@@ -185,6 +272,19 @@ export default function AddWordsScreen() {
   };
 
   const handleGenerateExample = async () => {
+    // Pro feature guard
+    if (!isProUser) {
+      Alert.alert(
+        "Pro Feature 👑",
+        "AI Examples are available only for Pro members.",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Upgrade", onPress: () => router.push('/paywall') }
+        ]
+      );
+      return;
+    }
+
     if (!currentWord.term.trim()) {
       Alert.alert('Error', 'Please enter a term first');
       return;
@@ -211,35 +311,39 @@ export default function AddWordsScreen() {
 
   if (notebookLoading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <View style={styles.container}>
         <Text>Loading...</Text>
-      </SafeAreaView>
+      </View>
     );
   }
 
   if (!notebook) {
     return (
-      <SafeAreaView style={styles.container}>
+      <View style={styles.container}>
         <Text>Notebook not found</Text>
-      </SafeAreaView>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       {viewMode === 'input' ? (
         <>
           {/* Input Mode - Original UI */}
           {/* Header */}
-          <View style={styles.header}>
-            <TouchableOpacity onPress={() => router.back()}>
-              <Ionicons name="arrow-back" size={24} color="#333" />
-            </TouchableOpacity>
-            <Text style={styles.headerTitle}>Add Words</Text>
-            <TouchableOpacity onPress={handleSaveAndExit}>
-              <Text style={styles.saveButton}>Save</Text>
-            </TouchableOpacity>
-          </View>
+          <Header 
+            title="Add Words"
+            leftElement={
+              <TouchableOpacity onPress={() => router.back()}>
+                <Ionicons name="arrow-back" size={24} color="#333" />
+              </TouchableOpacity>
+            }
+            rightElement={
+              <TouchableOpacity onPress={handleSaveAndExit}>
+                <Text style={styles.saveButton}>Save</Text>
+              </TouchableOpacity>
+            }
+          />
 
           {/* Progress Bar */}
           <View style={styles.progressContainer}>
@@ -256,24 +360,28 @@ export default function AddWordsScreen() {
             </Text>
           </View>
 
-          <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+          <KeyboardAvoidingView 
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={styles.keyboardContainer}
+          >
+            <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
             {/* Word Type Selector */}
-            <Text style={styles.sectionTitle}>Word Type</Text>
+            <Text style={[styles.sectionTitle, styles.firstSectionTitle]}>Word Type</Text>
             <View style={styles.typeSelector}>
               {WORD_TYPES.map(type => (
                 <TouchableOpacity
-                  key={type}
+                  key={type.value}
                   style={[
                     styles.typeButton,
-                    currentWord.type === type && styles.typeButtonActive
+                    currentWord.type === type.value && styles.typeButtonActive
                   ]}
-                  onPress={() => handleTypeSelect(type)}
+                  onPress={() => handleTypeSelect(type.value)}
                 >
                   <Text style={[
                     styles.typeButtonText,
-                    currentWord.type === type && styles.typeButtonTextActive
+                    currentWord.type === type.value && styles.typeButtonTextActive
                   ]}>
-                    {type.charAt(0).toUpperCase() + type.slice(1)}
+                    {type.label}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -342,52 +450,60 @@ export default function AddWordsScreen() {
               multiline
               numberOfLines={3}
             />
-          </ScrollView>
+            </ScrollView>
 
-          {/* Navigation Buttons */}
-          <View style={styles.buttonContainer}>
-            <TouchableOpacity 
-              style={[styles.navButton, localWords.length === 0 && styles.navButtonDisabled]}
-              onPress={handlePrevious}
-              disabled={localWords.length === 0}
-            >
-              <Ionicons name="chevron-back" size={20} color={localWords.length === 0 ? "#999" : "white"} />
-              <Text style={[styles.navButtonText, localWords.length === 0 && styles.navButtonTextDisabled]}>
-                Previous
-              </Text>
-            </TouchableOpacity>
+            {/* Navigation Buttons */}
+            <View style={styles.buttonContainer}>
+              <TouchableOpacity 
+                style={[styles.navButton, localWords.length === 0 && styles.navButtonDisabled]}
+                onPress={handlePrevious}
+                disabled={localWords.length === 0}
+              >
+                <Ionicons name="chevron-back" size={20} color={localWords.length === 0 ? "#999" : "white"} />
+                <Text style={[styles.navButtonText, localWords.length === 0 && styles.navButtonTextDisabled]}>
+                  Previous
+                </Text>
+              </TouchableOpacity>
 
-            <TouchableOpacity 
-              style={styles.nextButton}
-              onPress={isLastWord ? handleSaveAndExit : handleNext}
-            >
-              <Text style={styles.nextButtonText}>
-                {isLastWord ? 'Done' : 'Next'}
-              </Text>
-              <Ionicons name="chevron-forward" size={20} color="white" />
-            </TouchableOpacity>
-          </View>
+              <TouchableOpacity 
+                style={styles.nextButton}
+                onPress={isLastWord ? handleSaveAndExit : handleNext}
+              >
+                <Text style={styles.nextButtonText}>
+                  {isLastWord ? 'Done' : 'Next'}
+                </Text>
+                <Ionicons name="chevron-forward" size={20} color="white" />
+              </TouchableOpacity>
+            </View>
+          </KeyboardAvoidingView>
         </>
       ) : (
         <>
           {/* Summary Mode - Word Cards & Safety Lock */}
           {/* Header */}
-          <View style={styles.header}>
-            <View style={{ width: 24 }} />
-            <Text style={styles.headerTitle}>Words Added</Text>
-            <View style={{ width: 24 }} />
-          </View>
+          <Header 
+            title="Words Added" 
+            rightElement={
+              <Text style={styles.streakText}>+1 🔥</Text>
+            }
+          />
 
           <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
             {sessionWords.map((word, index) => (
               <View key={index} style={styles.wordCard}>
-                <View style={styles.wordCardHeader}>
-                  <Text style={styles.wordTerm}>{word.term}</Text>
-                  <Text style={styles.wordType}>{word.type}</Text>
+                <View style={styles.wordSection}>
+                  <View style={styles.wordCardHeader}>
+                    <Text style={styles.wordTerm}>{word.term}</Text>
+                    <Text style={styles.wordType}>{word.type}</Text>
+                  </View>
                 </View>
-                <Text style={styles.wordDefinition}>{word.definition}</Text>
+                <View style={styles.definitionSection}>
+                  <Text style={styles.wordDefinition}>{word.definition}</Text>
+                </View>
                 {word.example && (
-                  <Text style={styles.wordExample}>Example: {word.example}</Text>
+                  <View style={styles.exampleSection}>
+                    <Text style={styles.wordExample}>Example: {word.example}</Text>
+                  </View>
                 )}
               </View>
             ))}
@@ -419,100 +535,86 @@ export default function AddWordsScreen() {
           </View>
         </>
       )}
-    </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
+    ...CommonStyles.page,
+  },
+  keyboardContainer: {
     flex: 1,
-    backgroundColor: '#f8f9fa',
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: 'white',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
   },
   saveButton: {
-    fontSize: 16,
-    color: '#007AFF',
-    fontWeight: '600',
+    ...Typography.titleMedium,
+    color: Colors.primary,
   },
   progressContainer: {
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: 'white',
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.md,
   },
   progressBar: {
     height: 8,
-    backgroundColor: '#e0e0e0',
-    borderRadius: 4,
+    backgroundColor: Colors.inactive,
+    borderRadius: BorderRadius.small,
     overflow: 'hidden',
-    marginBottom: 8,
+    marginBottom: Spacing.sm,
   },
   progressFill: {
     height: '100%',
-    backgroundColor: '#4CAF50',
-    borderRadius: 4,
+    backgroundColor: Colors.primary,
+    borderRadius: BorderRadius.small,
   },
   progressText: {
-    fontSize: 14,
-    color: '#666',
+    ...Typography.subtitleSmall,
     textAlign: 'center',
   },
   content: {
     flex: 1,
-    paddingHorizontal: 20,
-    paddingTop: 20,
+    paddingHorizontal: Spacing.xl,
+    paddingTop: Spacing.sm,
   },
   sectionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 8,
-    marginTop: 16,
+    ...Typography.titleMedium,
+    marginBottom: Spacing.sm,
+    marginTop: Spacing.lg,
+  },
+  firstSectionTitle: {
+    marginTop: Spacing.md,
   },
   typeSelector: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    marginBottom: 8,
+    marginBottom: Spacing.sm,
+    gap: Spacing.sm,
   },
   typeButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: '#e0e0e0',
-    marginRight: 8,
-    marginBottom: 8,
+    ...Effects3D.button,
+    ...Effects3D.container,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.xlarge,
+    backgroundColor: Colors.inactive,
+    borderColor: Colors.inactive,
+    borderBottomColor: Colors.border,
   },
   typeButtonActive: {
-    backgroundColor: '#007AFF',
+    ...Effects3D.buttonPrimary,
   },
   typeButtonText: {
-    fontSize: 14,
-    color: '#666',
+    ...Typography.subtitleSmall,
   },
   typeButtonTextActive: {
-    color: 'white',
+    color: Colors.white,
   },
   input: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    padding: 12,
+    ...Effects3D.input,
+    borderRadius: BorderRadius.small,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
     fontSize: 16,
-    backgroundColor: 'white',
-    marginBottom: 8,
+    marginBottom: Spacing.sm,
   },
   textArea: {
     minHeight: 80,
@@ -521,61 +623,77 @@ const styles = StyleSheet.create({
   buttonContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: 'white',
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.lg,
+    backgroundColor: Colors.white,
     borderTopWidth: 1,
-    borderTopColor: '#e0e0e0',
+    borderTopColor: Colors.border,
+    gap: Spacing.lg,
   },
   navButton: {
+    ...ButtonStyles.primaryMedium,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    backgroundColor: '#666',
-    borderRadius: 8,
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+    borderBottomColor: Colors.primaryDark,
     flex: 1,
-    marginRight: 8,
   },
   navButtonDisabled: {
-    backgroundColor: '#e0e0e0',
+    backgroundColor: Colors.inactive,
+    borderColor: Colors.inactive,
+    borderBottomColor: Colors.border,
   },
   navButtonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '600',
-    marginLeft: 4,
+    ...Typography.buttonMedium,
+    marginLeft: Spacing.xs,
   },
   navButtonTextDisabled: {
-    color: '#999',
+    color: Colors.textLight,
   },
   nextButton: {
+    ...ButtonStyles.primaryMedium,
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+    borderBottomColor: Colors.primaryDark,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    backgroundColor: '#4CAF50',
-    borderRadius: 8,
     flex: 1,
-    marginLeft: 8,
   },
   nextButtonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '600',
-    marginRight: 4,
+    ...Typography.buttonMedium,
+    marginRight: Spacing.xs,
   },
   // Summary Mode Styles
   wordCard: {
-    backgroundColor: 'white',
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
+    ...Effects3D.card,
+    backgroundColor: Colors.white,
+    borderRadius: BorderRadius.medium,
+    marginBottom: Spacing.md,
+    padding: Spacing.sm, // Add some padding to the main card
+  },
+  wordSection: {
+    backgroundColor: '#FFF8F0', // Very light warm orange (primary theme)
+    padding: Spacing.lg,
+    borderRadius: BorderRadius.medium,
+    marginBottom: Spacing.xs,
+    borderWidth: 1,
+    borderColor: '#FFE4CC', // Light orange border
+  },
+  definitionSection: {
+    backgroundColor: '#F0FDF4', // Very light success green
+    padding: Spacing.lg,
+    borderRadius: BorderRadius.medium,
+    marginBottom: Spacing.xs,
+    borderWidth: 1,
+    borderColor: '#BBF7D0', // Light green border
+  },
+  exampleSection: {
+    backgroundColor: '#FFFBEB', // Very light gold tint
+    padding: Spacing.lg,
+    borderRadius: BorderRadius.medium,
+    borderWidth: 1,
+    borderColor: '#FDE68A', // Light gold border
   },
   wordCardHeader: {
     flexDirection: 'row',
@@ -591,12 +709,13 @@ const styles = StyleSheet.create({
   },
   wordType: {
     fontSize: 12,
-    color: '#666',
-    backgroundColor: '#f0f0f0',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    color: Colors.white,
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     borderRadius: 12,
     textTransform: 'capitalize',
+    fontWeight: '600',
   },
   wordDefinition: {
     fontSize: 16,
@@ -614,6 +733,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'white',
     paddingHorizontal: 20,
     paddingVertical: 16,
+    paddingBottom: 34, // Add bottom padding for safe area
     borderTopWidth: 1,
     borderTopColor: '#e0e0e0',
     alignItems: 'center',
@@ -624,25 +744,31 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   closeButton: {
+    ...ButtonStyles.primaryMedium,
+    ...Effects3D.button,
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+    borderBottomColor: Colors.primaryDark,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 32,
-    paddingVertical: 12,
-    backgroundColor: '#4CAF50',
-    borderRadius: 8,
     width: '100%',
     justifyContent: 'center',
   },
   closeButtonDisabled: {
-    backgroundColor: '#e0e0e0',
+    backgroundColor: Colors.inactive,
+    borderColor: Colors.inactive,
+    borderBottomColor: Colors.border,
   },
   closeButtonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '600',
+    ...Typography.buttonMedium,
   },
   closeButtonTextDisabled: {
-    color: '#999',
+    color: Colors.textLight,
+  },
+  streakText: {
+    ...Typography.titleMedium,
+    color: Colors.primary,
+    fontSize: 16,
   },
   // AI button styles
   inputSection: {

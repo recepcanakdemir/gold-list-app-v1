@@ -14,6 +14,8 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import CountryFlag from 'react-native-country-flag';
 import { useCreateNotebook } from '../lib/database-hooks';
+import { Colors, Spacing, BorderRadius, Typography, Effects3D, CommonStyles, ButtonStyles } from '../styles/theme';
+import { Header } from '../components/Header';
 
 // Language data with country codes for flags
 const LANGUAGES = [
@@ -46,7 +48,7 @@ const LANGUAGE_LEVELS = [
 ];
 
 // Daily goal options
-const DAILY_GOALS = [5, 10, 15, 20];
+const DAILY_GOALS = [10, 15, 20, 25];
 
 interface LanguagePickerModalProps {
   visible: boolean;
@@ -206,21 +208,27 @@ export default function CreateNotebookScreen() {
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={24} color="#333" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Create Notebook</Text>
-        <TouchableOpacity 
-          onPress={handleCreateNotebook} 
-          style={[styles.createButton, !notebookName.trim() && styles.createButtonDisabled]}
-          disabled={!notebookName.trim() || isCreating}
-        >
-          <Text style={[styles.createButtonText, !notebookName.trim() && styles.createButtonTextDisabled]}>
-            {isCreating ? 'Creating...' : 'Create'}
-          </Text>
-        </TouchableOpacity>
-      </View>
+      <Header 
+        title="Create Notebook"
+        noPadding={true}
+        titleSize="medium"
+        leftElement={
+          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+            <Ionicons name="arrow-back" size={24} color="#333" />
+          </TouchableOpacity>
+        }
+        rightElement={
+          <TouchableOpacity 
+            onPress={handleCreateNotebook} 
+            style={[styles.createButton, !notebookName.trim() && styles.createButtonDisabled]}
+            disabled={!notebookName.trim() || isCreating}
+          >
+            <Text style={[styles.createButtonText, !notebookName.trim() && styles.createButtonTextDisabled]}>
+              {isCreating ? 'Creating...' : 'Create'}
+            </Text>
+          </TouchableOpacity>
+        }
+      />
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         {/* Notebook Title */}
@@ -318,86 +326,57 @@ export default function CreateNotebookScreen() {
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
-    backgroundColor: '#f8f9fa',
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: 'white',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
+    ...CommonStyles.page,
   },
   backButton: {
-    padding: 8,
-    marginLeft: -8,
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-    flex: 1,
-    textAlign: 'center',
-    marginHorizontal: 16,
+    padding: Spacing.sm,
+    marginLeft: -Spacing.sm,
   },
   createButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    backgroundColor: '#FFA500',
-    borderRadius: 8,
+    ...ButtonStyles.primarySmall,
   },
   createButtonDisabled: {
-    backgroundColor: '#e0e0e0',
+    backgroundColor: Colors.inactive,
+    borderColor: Colors.inactive,
+    borderBottomColor: Colors.border,
   },
   createButtonText: {
-    color: 'white',
+    ...Typography.buttonMedium,
     fontSize: 16,
-    fontWeight: '600',
   },
   createButtonTextDisabled: {
-    color: '#999',
+    color: Colors.textLight,
   },
   content: {
-    flex: 1,
-    paddingHorizontal: 20,
+    ...CommonStyles.content,
   },
   section: {
-    marginTop: 32,
+    ...CommonStyles.section,
   },
   sectionLabel: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 8,
+    ...Typography.titleLarge,
+    marginBottom: Spacing.sm,
   },
   sectionSubtitle: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 16,
+    ...Typography.subtitleSmall,
+    marginBottom: Spacing.lg,
   },
   textInput: {
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 16,
+    ...Effects3D.input,
+    borderRadius: BorderRadius.medium,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.lg,
     fontSize: 16,
-    backgroundColor: 'white',
-    color: '#333',
+    color: Colors.textBody,
   },
   dropdown: {
+    ...Effects3D.input,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    backgroundColor: 'white',
+    borderRadius: BorderRadius.medium,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.lg,
   },
   dropdownContent: {
     flexDirection: 'row',
@@ -405,48 +384,44 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   dropdownText: {
-    fontSize: 16,
-    color: '#333',
-    marginLeft: 8,
+    ...Typography.body,
+    marginLeft: Spacing.sm,
   },
   flagIcon: {
-    borderRadius: 2,
-    marginRight: 8,
+    borderRadius: BorderRadius.small / 2,
+    marginRight: Spacing.sm,
   },
   goalSelector: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    gap: 12,
+    gap: Spacing.md,
   },
   goalOption: {
+    ...Effects3D.container,
     flex: 1,
     alignItems: 'center',
-    paddingVertical: 20,
-    paddingHorizontal: 16,
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 12,
-    backgroundColor: 'white',
+    paddingVertical: Spacing.xl,
+    paddingHorizontal: Spacing.lg,
+    borderRadius: BorderRadius.medium,
   },
   goalOptionSelected: {
-    borderColor: '#FFA500',
+    ...Effects3D.buttonPrimary,
     backgroundColor: '#FFF8F0',
   },
   goalOptionText: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 4,
+    color: Colors.textBody,
+    marginBottom: Spacing.xs,
   },
   goalOptionTextSelected: {
-    color: '#FFA500',
+    color: Colors.primary,
   },
   goalOptionLabel: {
-    fontSize: 14,
-    color: '#666',
+    ...Typography.subtitleSmall,
   },
   goalOptionLabelSelected: {
-    color: '#FFA500',
+    color: Colors.primary,
   },
   // Modal styles
   modalOverlay: {
@@ -455,24 +430,29 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   pickerModal: {
-    backgroundColor: 'white',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    ...Effects3D.card,
+    borderTopLeftRadius: BorderRadius.xlarge,
+    borderTopRightRadius: BorderRadius.xlarge,
+    borderBottomWidth: 0,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
     maxHeight: '80%',
   },
   pickerHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.lg,
+    ...Effects3D.container,
+    borderRadius: 0,
+    borderTopWidth: 0,
+    borderLeftWidth: 0,
+    borderRightWidth: 0,
+    borderBottomWidth: 3,
   },
   pickerTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
+    ...Typography.titleLarge,
   },
   pickerList: {
     maxHeight: 400,
@@ -480,34 +460,32 @@ const styles = StyleSheet.create({
   pickerItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.lg,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    borderBottomColor: Colors.border,
   },
   pickerItemSelected: {
     backgroundColor: '#FFF8F0',
   },
   pickerItemText: {
-    fontSize: 16,
-    color: '#333',
+    ...Typography.body,
     flex: 1,
-    marginLeft: 12,
+    marginLeft: Spacing.md,
   },
   pickerItemTextSelected: {
-    color: '#FFA500',
+    color: Colors.primary,
     fontWeight: '600',
   },
   levelInfo: {
     flex: 1,
-    marginLeft: 12,
+    marginLeft: Spacing.md,
   },
   levelDescription: {
-    fontSize: 14,
-    color: '#666',
+    ...Typography.subtitleSmall,
     marginTop: 2,
   },
   levelDescriptionSelected: {
-    color: '#CC8400',
+    color: Colors.primaryDark,
   },
 });

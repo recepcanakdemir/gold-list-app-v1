@@ -6,6 +6,7 @@ interface TimeContextValue {
   addDay: () => void
   resetToNow: () => void
   isSimulated: boolean
+  simulatedDays: number
 }
 
 const TimeContext = createContext<TimeContextValue | undefined>(undefined)
@@ -62,6 +63,7 @@ export function TimeProvider({ children }: { children: React.ReactNode }) {
     addDay,
     resetToNow,
     isSimulated: timeOffset !== 0,
+    simulatedDays: Math.floor(timeOffset / (24 * 60 * 60 * 1000)), // Calculate days from millisecond offset
   }
 
   return <TimeContext.Provider value={value}>{children}</TimeContext.Provider>

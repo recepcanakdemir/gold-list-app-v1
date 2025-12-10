@@ -4,6 +4,8 @@ import { useFocusEffect } from 'expo-router';
 import { useProfile, useDashboardStats, useActivityLog } from '../../lib/database-hooks';
 import { useCurrentTime } from '../../lib/time-provider';
 import Svg, { Circle } from 'react-native-svg';
+import { Colors, Spacing, BorderRadius, Typography, Effects3D, CommonStyles, ButtonStyles } from '../../styles/theme';
+import { Header } from '../../components/Header';
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
@@ -273,18 +275,12 @@ export default function DashboardScreen() {
   return (
     <View style={styles.container}>
       {/* Custom Header - No default header needed */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Dashboard</Text>
-        <View style={styles.streakContainer}>
-          <Text style={[
-            styles.streakText, 
-            streakStatus === 'pending' && styles.pendingStreakText,
-            streakStatus === 'broken' && styles.brokenStreakText
-          ]}>
-            {streakStatus === 'broken' ? '💔' : '🔥'} {currentStreak}
-          </Text>
-        </View>
-      </View>
+      <Header 
+        title="Dashboard" 
+        showStreak={true}
+        streakValue={currentStreak}
+        streakStatus={streakStatus as 'completed' | 'pending' | 'broken'}
+      />
       
       <ScrollView 
         style={styles.scrollContainer} 
@@ -429,8 +425,7 @@ export default function DashboardScreen() {
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
-    backgroundColor: '#f8f9fa',
+    ...CommonStyles.page,
   },
   scrollContainer: {
     flex: 1,
@@ -438,42 +433,11 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingBottom: 120, // Space for tab bar and dev button
   },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 60,
-    paddingBottom: 20,
-    backgroundColor: 'white',
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  streakContainer: {
-    backgroundColor: '#f0f0f0',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-  },
-  streakText: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  brokenStreakText: {
-    color: '#999',
-    opacity: 0.7,
-  },
-  pendingStreakText: {
-    color: '#999',
-    opacity: 0.6,
-  },
   section: {
-    backgroundColor: 'white',
-    marginHorizontal: 8,
-    marginTop: 20,
+    ...Effects3D.card,
+    backgroundColor: Colors.white,
+    marginHorizontal: Spacing.xl,
+    marginTop: Spacing.xl,
     borderRadius: 16,
     padding: 20,
     shadowColor: '#000',

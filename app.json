@@ -1,22 +1,25 @@
 {
   "expo": {
-    "name": "GoldlistApp",
+    "name": "Gold List",
     "scheme": "goldlist",
-    "slug": "GoldlistApp",
+    "slug": "goldlist-method",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/images/splashicon.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.recepsienen.goldlist-method",
+      "appleTeamId": "3WL9FYSV99"
     },
     "android": {
+      "package": "com.recepsienen.goldlist_method",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
@@ -37,6 +40,11 @@
           "defaultChannel": "default"
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "your-eas-project-id"
+      }
+    }
   }
 }

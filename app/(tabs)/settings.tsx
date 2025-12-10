@@ -13,6 +13,8 @@ import { supabase } from '../../lib/supabase';
 import { useProfile } from '../../lib/database-hooks';
 import { useCurrentTime } from '../../lib/time-provider';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Colors, Spacing, BorderRadius, Typography, Effects3D, CommonStyles, ButtonStyles } from '../../styles/theme';
+import { Header } from '../../components/Header';
 
 interface SettingItemProps {
   icon: string;
@@ -137,12 +139,9 @@ export default function SettingsScreen() {
   return (
     <View style={styles.container}>
       {/* Custom Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Settings</Text>
-        <View style={styles.streakContainer}>
-          <Text style={styles.streakText}>🔥 {profile?.current_streak || 0}</Text>
-        </View>
-      </View>
+      <Header 
+        title="Settings"
+      />
 
       <ScrollView 
         style={styles.scrollContainer} 
@@ -152,40 +151,13 @@ export default function SettingsScreen() {
         {/* Account Section */}
         <SettingSection title="Account">
           <SettingItem
-            icon="person-circle"
-            title="Profile"
-            subtitle={`Target Language: ${profile?.target_lang || 'English'}`}
-            onPress={() => Alert.alert('Profile', 'Profile settings coming soon!')}
-          />
-          <SettingItem
             icon="notifications"
             title="Notifications"
             subtitle="Daily reminders and achievements"
             onPress={handleNotifications}
           />
-          <SettingItem
-            icon="language"
-            title="Language"
-            subtitle="App language settings"
-            onPress={handleLanguage}
-          />
         </SettingSection>
 
-        {/* Learning Section */}
-        <SettingSection title="Learning">
-          <SettingItem
-            icon="target"
-            title="Daily Word Goal"
-            subtitle={`Current goal: ${profile?.daily_word_goal || 20} words`}
-            onPress={() => Alert.alert('Daily Goal', 'Goal settings coming soon!')}
-          />
-          <SettingItem
-            icon="time"
-            title="Study Reminders"
-            subtitle="Set your preferred study times"
-            onPress={() => Alert.alert('Reminders', 'Reminder settings coming soon!')}
-          />
-        </SettingSection>
 
         {/* Support Section */}
         <SettingSection title="Support">
@@ -293,32 +265,7 @@ export default function SettingsScreen() {
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
-    backgroundColor: '#f8f9fa',
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 60,
-    paddingBottom: 20,
-    backgroundColor: 'white',
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  streakContainer: {
-    backgroundColor: '#f0f0f0',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-  },
-  streakText: {
-    fontSize: 16,
-    fontWeight: '600',
+    ...CommonStyles.page,
   },
   scrollContainer: {
     flex: 1,

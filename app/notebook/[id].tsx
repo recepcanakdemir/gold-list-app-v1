@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,12 @@ import {
   Alert,
   Modal,
   TextInput,
+  Dimensions,
+  ScrollView,
+  Image,
+  Pressable,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -18,9 +24,53 @@ import {
   useUpdateNotebook,
   useDeleteNotebook,
   useReviewWords,
-  useProfile
+  useProfile,
+  usePageTitle,
+  useUpdatePageTitle
 } from '../../lib/database-hooks';
+import { supabase } from '../../lib/supabase';
 import { useCurrentTime, formatDate, addDays, daysBetween } from '../../lib/time-provider';
+import { Colors, Spacing, BorderRadius, Typography, Effects3D, CommonStyles, ButtonStyles } from '../../styles/theme';
+import { Header } from '../../components/Header';
+
+// Language levels (same as create notebook)
+const LANGUAGE_LEVELS = [
+  { code: 'A1', label: 'A1 - Beginner', description: 'Can understand basic phrases' },
+  { code: 'A2', label: 'A2 - Elementary', description: 'Can communicate in simple tasks' },
+  { code: 'B1', label: 'B1 - Intermediate', description: 'Can handle most everyday situations' },
+  { code: 'B2', label: 'B2 - Upper Intermediate', description: 'Can express ideas fluently' },
+  { code: 'C1', label: 'C1 - Advanced', description: 'Can use language effectively' },
+  { code: 'C2', label: 'C2 - Proficient', description: 'Can understand virtually everything' },
+];
+
+// Get screen dimensions for responsive design
+const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
+
+// Language to country code mapping (from index.tsx)
+function getLanguageCountryCode(language: string): string {
+  const countryCodeMap: { [key: string]: string } = {
+    Spanish: 'ES', French: 'FR', German: 'DE', Italian: 'IT', English: 'GB',
+    Portuguese: 'PT', Russian: 'RU', Japanese: 'JP', Chinese: 'CN', Korean: 'KR',
+    Arabic: 'SA', Dutch: 'NL', Swedish: 'SE', Norwegian: 'NO', Polish: 'PL',
+    Turkish: 'TR', Hindi: 'IN'
+  };
+  return countryCodeMap[language] || 'US';
+}
+
+// Sinusoidal roadmap coordinate calculation
+function getRoadmapCoordinates(index: number) {
+  const centerX = screenWidth / 2;
+  const amplitude = screenWidth * 0.15; // Wave width (15% of screen width, reduced to keep popups on screen)
+  const frequency = 0.8; // Wave frequency - controls how many waves (increased for more dynamic curves)
+  const verticalSpacing = 100; // Distance between nodes vertically
+  const startOffset = 160; // Initial vertical offset from top (increased to avoid header covering popup)
+  
+  return {
+    x: centerX + amplitude * Math.sin(index * frequency),
+    y: index * verticalSpacing + startOffset
+  };
+}
+
 
 // Helper function to validate streak based on last activity
 function calculateDisplayStreak(profile: any, currentTime: Date) {
@@ -71,10 +121,19 @@ interface RoadmapItem {
 interface LessonNodeProps {
   item: RoadmapItem;
   index: number;
-  onNodePress: (item: RoadmapItem, index: number, event: any) => void;
+  coordinates: { x: number; y: number };
+  onNodePress: (item: RoadmapItem, index: number) => void;
+  isPopupVisible: boolean;
+  onAddWords: () => void;
+  onReviewWords: () => void;
+  onAddContext: () => void;
+  onClosePopup: () => void;
+  reviewWordsCount: number;
+  notebook: any;
+  currentTime: Date;
 }
 
-function LessonNode({ item, index, onNodePress }: LessonNodeProps) {
+function LessonNode({ item, index, coordinates, onNodePress, isPopupVisible, onAddWords, onReviewWords, onAddContext, onClosePopup, reviewWordsCount, notebook, currentTime }: LessonNodeProps) {
   // Determine visual style based on word count status
   const getCircleStyle = () => {
     if (item.isActive) return styles.activeCircle; // Red - today, no words yet
@@ -91,44 +150,128 @@ function LessonNode({ item, index, onNodePress }: LessonNodeProps) {
     if (item.isMissed) return styles.missedText;
     return styles.lockedText;
   };
-  
-  // Natural flowing zigzag pattern - each node maps to exact column position
-  const getNodePosition = (index: number) => {
-    const cycle = index % 12;
-    switch (cycle) {
-      case 0: return 'position3';  // 00100 - Node 1 in column 3
-      case 1: return 'position4';  // 00010 - Node 2 in column 4  
-      case 2: return 'position5';  // 00001 - Node 3 in column 5
-      case 3: return 'position4';  // 00010 - Node 4 in column 4
-      case 4: return 'position3';  // 00100 - Node 5 in column 3
-      case 5: return 'position2';  // 01000 - Node 6 in column 2
-      case 6: return 'position1';  // 10000 - Node 7 in column 1
-      case 7: return 'position2';  // 01000 - Node 8 in column 2
-      case 8: return 'position3';  // 00100 - Node 9 in column 3
-      case 9: return 'position4';  // 00010 - Node 10 in column 4
-      case 10: return 'position5'; // 00001 - Node 11 in column 5
-      case 11: return 'position4'; // 00010 - Node 12 in column 4
-      default: return 'position3';
+
+  // Calculate popup content
+  const getPopupContent = () => {
+    if (!notebook) return { subtitle: "", showActions: false };
+    
+    // Calculate current active day (same logic as roadmap generation)
+    const notebookCreatedDate = new Date(notebook.created_at);
+    const currentDate = new Date(currentTime);
+    const daysSinceCreation = daysBetween(notebookCreatedDate, currentDate);
+    const currentActiveDay = daysSinceCreation + 1;
+    
+    const isCurrentDay = item.page_number === currentActiveDay;
+    const hasWords = item.wordCount && item.wordCount > 0;
+    const reachedLimit = item.wordCount >= item.wordLimit;
+    
+    let subtitle = "";
+    let showActions = false;
+    
+    if (isCurrentDay) {
+      // Current day logic
+      if (reachedLimit) {
+        subtitle = "Words are waiting for review date";
+      } else {
+        subtitle = hasWords 
+          ? `Add ${item.wordLimit - item.wordCount} more words`
+          : `Add ${item.wordLimit || 20} words`;
+        showActions = true;
+      }
+    } else {
+      // Past day logic  
+      if (hasWords) {
+        subtitle = "Words are waiting for review date";
+      } else {
+        subtitle = "No words added - skipped day";
+      }
     }
+    
+    return { subtitle, showActions };
   };
+
+  const popupContent = getPopupContent();
   
-  const position = getNodePosition(index);
-  const positionStyle = position === 'position1' ? styles.nodePosition1 : 
-                       position === 'position2' ? styles.nodePosition2 :
-                       position === 'position3' ? styles.nodePosition3 :
-                       position === 'position4' ? styles.nodePosition4 : styles.nodePosition5;
+  // Determine popup position relative to node
+  const getPopupPosition = () => {
+    const popupWidth = 200;
+    // Calculate popup height based on content
+    const baseHeight = 80; // Title + subtitle
+    const buttonHeight = popupContent.showActions ? 80 : 0; // Space for buttons if present
+    const totalPopupHeight = baseHeight + buttonHeight;
+    const nodeRadius = 10; // Half of 80px node
+    const spacing = 16; // Gap between node and popup
+    
+    return {
+      left: -(popupWidth / 2) + nodeRadius, // Center popup horizontally over the 80px node
+      top: -(totalPopupHeight + spacing + nodeRadius), // Position popup above node with consistent spacing
+    };
+  };
+
+  const popupPosition = getPopupPosition();
 
   return (
-    <View style={[styles.roadmapNode, positionStyle]}>
+    <View style={[
+      styles.roadmapNode, 
+      {
+        position: 'absolute',
+        left: coordinates.x - 40, // Center the 80px circle
+        top: coordinates.y - 40,  // Center the 80px circle
+        zIndex: isPopupVisible ? 1000 : 1, // Elevate entire node when popup is visible
+        elevation: isPopupVisible ? 1000 : 1, // Android elevation
+      }
+    ]}>
       <TouchableOpacity 
         style={[styles.lessonCircle, getCircleStyle()]}
-        onPress={(event) => onNodePress(item, index, event)}
+        onPress={() => onNodePress(item, index)}
         disabled={item.isLocked} // Allow clicks on all nodes except future locked ones
       >
         <Text style={[styles.lessonNumber, getTextStyle()]}>
           {item.page_number}
         </Text>
       </TouchableOpacity>
+      
+      {/* Embedded Popup */}
+      {isPopupVisible && (
+        <View style={[styles.embeddedPopup, popupPosition]}>
+          {/* This Pressable stops clicks from going to the overlay */}
+          <Pressable 
+            onPress={(e) => e.stopPropagation()} 
+            style={styles.nodePopupContent}
+          >
+            <Text style={styles.nodePopupTitle}>
+              Lesson {item.page_number}
+            </Text>
+            <Text style={styles.nodePopupSubtitle}>
+              {popupContent.subtitle}
+            </Text>
+            
+            {popupContent.showActions && (
+              <>
+                {/* Show Review button if there are due words, otherwise Add Words */}
+                {reviewWordsCount > 0 ? (
+                  <TouchableOpacity style={styles.popupReviewBtn} onPress={onReviewWords}>
+                    <Ionicons name="refresh" size={16} color="white" style={{ marginRight: 8 }} />
+                    <Text style={styles.popupReviewBtnText}>
+                      Review ({reviewWordsCount} due)
+                    </Text>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity style={styles.popupAddWordsBtn} onPress={onAddWords}>
+                    <Text style={styles.popupAddWordsBtnText}>Add Words</Text>
+                  </TouchableOpacity>
+                )}
+                
+                <TouchableOpacity style={styles.popupAddContextBtn} onPress={onAddContext}>
+                  <Text style={styles.popupAddContextBtnText}>Add Context</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </Pressable>
+          {/* Arrow pointing to node */}
+          <View style={styles.popupArrow} />
+        </View>
+      )}
     </View>
   );
 }
@@ -140,10 +283,16 @@ export default function NotebookDetailScreen() {
   
   const [showOptionsModal, setShowOptionsModal] = useState(false);
   const [showEditTitleModal, setShowEditTitleModal] = useState(false);
-  const [showNodePopup, setShowNodePopup] = useState(false);
-  const [selectedNode, setSelectedNode] = useState<RoadmapItem | null>(null);
-  const [popupPosition, setPopupPosition] = useState({ x: 0, y: 0 });
+  const [showEditLevelModal, setShowEditLevelModal] = useState(false);
+  const [showContextModal, setShowContextModal] = useState(false);
+  const [selectedNodeIndex, setSelectedNodeIndex] = useState<number | null>(null);
   const [editedTitle, setEditedTitle] = useState('');
+  const [selectedLevel, setSelectedLevel] = useState<typeof LANGUAGE_LEVELS[0]>(LANGUAGE_LEVELS[1]);
+  const [contextText, setContextText] = useState('');
+  const [selectedPageNumber, setSelectedPageNumber] = useState<number>(1);
+  
+  // ScrollView reference for auto-scrolling
+  const scrollViewRef = useRef<ScrollView>(null);
   
   const { data: notebook, isLoading: notebookLoading } = useNotebook(id as string);
   const { data: pageNumbers, isLoading: pageNumbersLoading } = usePageNumbers(id as string);
@@ -152,6 +301,8 @@ export default function NotebookDetailScreen() {
   const { data: profile } = useProfile();
   const updateNotebook = useUpdateNotebook();
   const deleteNotebook = useDeleteNotebook();
+  const updatePageTitle = useUpdatePageTitle();
+  const { data: pageTitle } = usePageTitle(id as string, selectedPageNumber);
   
   // Calculate display streak with three-state logic
   const streakInfo = calculateDisplayStreak(profile, currentTime);
@@ -234,66 +385,111 @@ export default function NotebookDetailScreen() {
     return items;
   }, [notebook, pageNumbers, wordsCount, currentTime]);
 
-  const handleNodePress = (item: RoadmapItem, index: number, event: any) => {
-    // Allow clicks on active nodes and all past nodes (block only future locked nodes)
-    if (item.isLocked) return;
+  // Auto-scroll to current day function
+  const autoScrollToCurrentDay = () => {
+    if (!notebook || roadmapItems.length === 0) return;
     
-    // Measure the touch position
-    event.target.measure((x: number, y: number, width: number, height: number, pageX: number, pageY: number) => {
-      // Determine node position using same logic as component
-      const getNodePosition = (index: number) => {
-        const cycle = index % 12;
-        switch (cycle) {
-          case 0: return 'position3';
-          case 1: return 'position4';
-          case 2: return 'position5';
-          case 3: return 'position4';
-          case 4: return 'position3';
-          case 5: return 'position2';
-          case 6: return 'position1';
-          case 7: return 'position2';
-          case 8: return 'position3';
-          case 9: return 'position4';
-          case 10: return 'position5';
-          case 11: return 'position4';
-          default: return 'position3';
-        }
-      };
+    const notebookCreatedDate = new Date(notebook.created_at);
+    const currentDate = new Date(currentTime);
+    const daysSinceCreation = daysBetween(notebookCreatedDate, currentDate);
+    const currentActiveDay = daysSinceCreation + 1;
+    
+    // Find the current day's index in roadmapItems
+    const currentDayIndex = roadmapItems.findIndex(item => item.page_number === currentActiveDay);
+    
+    if (currentDayIndex !== -1) {
+      // Calculate scroll position for the current day
+      const coordinates = getRoadmapCoordinates(currentDayIndex);
+      const scrollY = coordinates.y - 200; // Offset to center node on screen
       
-      const position = getNodePosition(index);
-      let popupX: number;
+      // Scroll to current day
+      scrollViewRef.current?.scrollTo({
+        y: Math.max(0, scrollY), // Ensure we don't scroll to negative position
+        animated: true,
+      });
       
-      if (position === 'position3') {
-        popupX = pageX + width + 20; // Show to right of center node
-      } else if (position === 'position1' || position === 'position2') {
-        popupX = pageX + width + 20; // Show to right of left nodes
-      } else { // position4 or position5
-        popupX = pageX - 187; // Show to left of right nodes (167 + 20 margin)
-      }
-      
-      const popupY = pageY - 50; // Center popup vertically with node
-      
-      setPopupPosition({ x: popupX, y: popupY });
-      setSelectedNode(item);
-      setShowNodePopup(true);
-    });
-  };
-
-  const handleAddWords = () => {
-    setShowNodePopup(false);
-    if (selectedNode) {
-      router.push(`/notebook/${id}/add?page=${selectedNode.page_number}`);
+      // Auto-open popup for current day after a short delay
+      setTimeout(() => {
+        setSelectedNodeIndex(currentDayIndex);
+      }, 500);
     }
   };
 
+  // Auto-scroll to current day when notebook data loads
+  useEffect(() => {
+    if (notebook && roadmapItems.length > 0 && !notebookLoading && !pageNumbersLoading) {
+      // Small delay to ensure ScrollView is rendered
+      setTimeout(() => {
+        autoScrollToCurrentDay();
+      }, 300);
+    }
+  }, [notebook, roadmapItems.length, notebookLoading, pageNumbersLoading]);
+
+  const handleNodePress = (item: RoadmapItem, index: number) => {
+    // Allow clicks on active nodes and all past nodes (block only future locked nodes)
+    if (item.isLocked) return;
+    
+    // Toggle popup - if same node clicked, close it, otherwise show new one
+    if (selectedNodeIndex === index) {
+      setSelectedNodeIndex(null);
+    } else {
+      setSelectedNodeIndex(index);
+    }
+  };
+
+  const handleAddWords = (pageNumber: number) => {
+    setSelectedNodeIndex(null);
+    router.push(`/notebook/${id}/add?page=${pageNumber}`);
+  };
+
   const handleReviewWords = () => {
-    setShowNodePopup(false);
+    setSelectedNodeIndex(null);
     router.push(`/notebook/${id}/review`);
   };
 
-  const handleAddContext = () => {
-    setShowNodePopup(false);
-    Alert.alert('Add Context', 'Context addition feature coming soon!');
+  const handleAddContext = async (pageNumber: number) => {
+    setSelectedNodeIndex(null);
+    setSelectedPageNumber(pageNumber);
+    
+    // Load existing context for this specific page
+    try {
+      const { data } = await supabase
+        .from('pages')
+        .select('title')
+        .eq('notebook_id', id)
+        .eq('page_number', pageNumber)
+        .single();
+      
+      setContextText(data?.title || '');
+    } catch (error) {
+      // Page doesn't exist yet, start with empty context
+      setContextText('');
+    }
+    
+    setShowContextModal(true);
+  };
+
+  const handleSaveContext = async () => {
+    if (!contextText.trim()) {
+      Alert.alert('Error', 'Please enter some context');
+      return;
+    }
+
+    try {
+      await updatePageTitle.mutateAsync({
+        notebookId: id as string,
+        pageNumber: selectedPageNumber,
+        title: contextText.trim(),
+      });
+      setShowContextModal(false);
+      setContextText('');
+    } catch (error) {
+      Alert.alert('Error', 'Failed to save context');
+    }
+  };
+
+  const handleClosePopup = () => {
+    setSelectedNodeIndex(null);
   };
 
   const handleOptionsMenu = () => {
@@ -304,6 +500,13 @@ export default function NotebookDetailScreen() {
     setEditedTitle(notebook?.name || '');
     setShowOptionsModal(false);
     setShowEditTitleModal(true);
+  };
+
+  const handleEditLevel = () => {
+    const currentLevel = LANGUAGE_LEVELS.find(level => level.code === notebook?.language_level) || LANGUAGE_LEVELS[1];
+    setSelectedLevel(currentLevel);
+    setShowOptionsModal(false);
+    setShowEditLevelModal(true);
   };
 
   const handleDeleteNotebook = () => {
@@ -346,19 +549,33 @@ export default function NotebookDetailScreen() {
     }
   };
 
+  const handleSaveLevel = async () => {
+    try {
+      await updateNotebook.mutateAsync({
+        id: id as string,
+        language_level: selectedLevel.code,
+      });
+      setShowEditLevelModal(false);
+    } catch (error) {
+      Alert.alert('Error', 'Failed to update language level');
+    }
+  };
 
-  const renderRoadmapItem = ({ item, index }: { item: RoadmapItem; index: number }) => (
-    <LessonNode 
-      item={item} 
-      index={index}
-      onNodePress={handleNodePress}
-    />
-  );
 
   if (notebookLoading || pageNumbersLoading) {
     return (
       <View style={styles.container}>
-        <Text>Loading...</Text>
+        <Header 
+          title="Loading Notebook..."
+          leftElement={
+            <TouchableOpacity onPress={() => router.back()}>
+              <Ionicons name="arrow-back" size={24} color="#333" />
+            </TouchableOpacity>
+          }
+        />
+        <View style={styles.loadingContainer}>
+          <Text style={styles.loadingText}>Loading notebook...</Text>
+        </View>
       </View>
     );
   }
@@ -374,27 +591,40 @@ export default function NotebookDetailScreen() {
   return (
     <View style={styles.container}>
       {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color="#333" />
-        </TouchableOpacity>
-        <View style={styles.headerCenter}>
-          <Text style={styles.flagEmoji}>🇪🇸</Text>
-          <Text style={styles.headerTitle}>{notebook.name}</Text>
-        </View>
-        <View style={styles.streakContainer}>
-          <Text style={[
-            styles.streakText, 
-            streakStatus === 'pending' && styles.pendingStreakText,
-            streakStatus === 'broken' && styles.brokenStreakText
-          ]}>
-            {streakStatus === 'broken' ? '💔' : '🔥'} {displayStreak}
-          </Text>
-        </View>
-        <TouchableOpacity onPress={handleOptionsMenu}>
-          <Ionicons name="ellipsis-vertical" size={24} color="#333" />
-        </TouchableOpacity>
-      </View>
+      <Header 
+        title={
+          <View style={styles.headerTitleContainer}>
+            <Image 
+              source={{ uri: `https://flagcdn.com/w160/${getLanguageCountryCode(notebook.target_language || 'Spanish').toLowerCase()}.png` }}
+              style={styles.headerFlag}
+              resizeMode="cover"
+              defaultSource={{ uri: 'https://flagcdn.com/w160/us.png' }}
+            />
+            <Text style={styles.headerTitle}>{notebook.name}</Text>
+          </View>
+        }
+        leftElement={
+          <TouchableOpacity onPress={() => router.back()}>
+            <Ionicons name="arrow-back" size={24} color="#333" />
+          </TouchableOpacity>
+        }
+        rightElement={
+          <View style={styles.rightHeaderGroup}>
+            <View style={styles.streakContainer}>
+              <Text style={[
+                styles.streakText, 
+                streakStatus === 'pending' && styles.pendingStreakText,
+                streakStatus === 'broken' && styles.brokenStreakText
+              ]}>
+                {streakStatus === 'broken' ? '💔' : '🔥'} {displayStreak}
+              </Text>
+            </View>
+            <TouchableOpacity onPress={handleOptionsMenu} style={styles.optionsButton}>
+              <Ionicons name="ellipsis-vertical" size={24} color="#333" />
+            </TouchableOpacity>
+          </View>
+        }
+      />
 
       {/* Visual Debug Display for Time Simulation */}
       <View style={{ padding: 10, backgroundColor: '#f0f8ff', alignItems: 'center' }}>
@@ -403,14 +633,45 @@ export default function NotebookDetailScreen() {
         </Text>
       </View>
 
-      {/* Roadmap */}
-      <FlatList
-        data={roadmapItems}
-        renderItem={renderRoadmapItem}
-        keyExtractor={(item) => `lesson-${item.page_number}`}
+      {/* Sinusoidal Roadmap */}
+      <ScrollView 
+        ref={scrollViewRef}
+        style={styles.roadmapScrollView}
         contentContainerStyle={styles.roadmapContainer}
         showsVerticalScrollIndicator={false}
-      />
+      >
+        {/* Invisible overlay to close popup when tapping outside */}
+        {selectedNodeIndex !== null && (
+          <Pressable
+            style={styles.popupCloseOverlay}
+            onPress={handleClosePopup}
+          >
+            <View pointerEvents="none" style={{ flex: 1 }} />
+          </Pressable>
+        )}
+        
+        {/* Lesson Nodes */}
+        {roadmapItems.map((item, index) => {
+          const coordinates = getRoadmapCoordinates(index);
+          return (
+            <LessonNode
+              key={`lesson-${item.page_number}`}
+              item={item}
+              index={index}
+              coordinates={coordinates}
+              onNodePress={handleNodePress}
+              isPopupVisible={selectedNodeIndex === index}
+              onAddWords={() => handleAddWords(item.page_number)}
+              onReviewWords={handleReviewWords}
+              onAddContext={() => handleAddContext(item.page_number)}
+              onClosePopup={handleClosePopup}
+              reviewWordsCount={reviewWords?.length || 0}
+              notebook={notebook}
+              currentTime={currentTime}
+            />
+          );
+        })}
+      </ScrollView>
 
 
       {/* Options Modal */}
@@ -422,23 +683,29 @@ export default function NotebookDetailScreen() {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Notebook Options</Text>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Notebook Options</Text>
+              <TouchableOpacity 
+                style={styles.closeButton}
+                onPress={() => setShowOptionsModal(false)}
+              >
+                <Ionicons name="close" size={24} color="#666" />
+              </TouchableOpacity>
+            </View>
             
             <TouchableOpacity style={styles.optionButton} onPress={handleEditTitle}>
               <Ionicons name="pencil" size={20} color="#333" />
               <Text style={styles.optionButtonText}>Edit Title</Text>
             </TouchableOpacity>
             
+            <TouchableOpacity style={styles.optionButton} onPress={handleEditLevel}>
+              <Ionicons name="school" size={20} color="#333" />
+              <Text style={styles.optionButtonText}>Edit Language Level</Text>
+            </TouchableOpacity>
+            
             <TouchableOpacity style={[styles.optionButton, styles.deleteButton]} onPress={handleDeleteNotebook}>
               <Ionicons name="trash" size={20} color="#FF4444" />
               <Text style={[styles.optionButtonText, styles.deleteButtonText]}>Delete Notebook</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity 
-              style={[styles.modalButton, styles.cancelButton, { marginTop: 16 }]} 
-              onPress={() => setShowOptionsModal(false)}
-            >
-              <Text style={styles.cancelButtonText}>Cancel</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -453,7 +720,7 @@ export default function NotebookDetailScreen() {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Edit Notebook Title</Text>
+            <Text style={styles.modalTitleCentered}>Edit Notebook Title</Text>
             
             <TextInput
               style={styles.input}
@@ -482,197 +749,231 @@ export default function NotebookDetailScreen() {
         </View>
       </Modal>
 
-      {/* Node Popup */}
+      {/* Edit Language Level Modal */}
       <Modal
-        visible={showNodePopup}
+        visible={showEditLevelModal}
         transparent={true}
-        animationType="fade"
-        onRequestClose={() => setShowNodePopup(false)}
+        animationType="slide"
+        onRequestClose={() => setShowEditLevelModal(false)}
       >
-        <TouchableOpacity 
-          style={styles.popupOverlay}
-          activeOpacity={1}
-          onPress={() => setShowNodePopup(false)}
-        >
-          <View style={[styles.nodePopupContainer, { left: popupPosition.x, top: popupPosition.y }]}>
-            <View style={styles.nodePopupContent}>
-              <Text style={styles.nodePopupTitle}>
-                Lesson {selectedNode?.page_number}
-              </Text>
-              <Text style={styles.nodePopupSubtitle}>
-                {(() => {
-                  if (!selectedNode || !notebook) return "";
-                  
-                  // Calculate current active day (same logic as roadmap generation)
-                  const notebookCreatedDate = new Date(notebook.created_at);
-                  const currentDate = new Date(currentTime);
-                  const daysSinceCreation = daysBetween(notebookCreatedDate, currentDate);
-                  const currentActiveDay = daysSinceCreation + 1;
-                  
-                  const isCurrentDay = selectedNode.page_number === currentActiveDay;
-                  const hasWords = selectedNode.wordCount && selectedNode.wordCount > 0;
-                  const reachedLimit = selectedNode.wordCount >= selectedNode.wordLimit;
-                  
-                  if (isCurrentDay) {
-                    // Current day logic
-                    if (reachedLimit) {
-                      return "Words are waiting for review date";
-                    } else {
-                      return hasWords 
-                        ? `Add ${selectedNode.wordLimit - selectedNode.wordCount} more words`
-                        : `Add ${selectedNode.wordLimit || 20} words`;
-                    }
-                  } else {
-                    // Past day logic  
-                    if (hasWords) {
-                      return "Words are waiting for review date";
-                    } else {
-                      return "No words added - skipped day";
-                    }
-                  }
-                })()}
-              </Text>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitleCentered}>Edit Language Level</Text>
+            
+            {LANGUAGE_LEVELS.map((level) => (
+              <TouchableOpacity
+                key={level.code}
+                style={[
+                  styles.levelOption,
+                  selectedLevel.code === level.code && styles.levelOptionSelected
+                ]}
+                onPress={() => setSelectedLevel(level)}
+              >
+                <View style={styles.levelInfo}>
+                  <Text style={[
+                    styles.levelOptionText,
+                    selectedLevel.code === level.code && styles.levelOptionTextSelected
+                  ]}>
+                    {level.label}
+                  </Text>
+                  <Text style={[
+                    styles.levelDescription,
+                    selectedLevel.code === level.code && styles.levelDescriptionSelected
+                  ]}>
+                    {level.description}
+                  </Text>
+                </View>
+                {selectedLevel.code === level.code && (
+                  <Ionicons name="checkmark" size={20} color="#FFA500" />
+                )}
+              </TouchableOpacity>
+            ))}
+            
+            <View style={styles.modalButtons}>
+              <TouchableOpacity 
+                style={[styles.modalButton, styles.submitButton]} 
+                onPress={handleSaveLevel}
+              >
+                <Text style={styles.submitButtonText}>Save</Text>
+              </TouchableOpacity>
               
-              {/* Show action buttons only for current day nodes that haven't reached limit */}
-              {(() => {
-                if (!selectedNode || !notebook) return false;
-                
-                const notebookCreatedDate = new Date(notebook.created_at);
-                const currentDate = new Date(currentTime);
-                const daysSinceCreation = daysBetween(notebookCreatedDate, currentDate);
-                const currentActiveDay = daysSinceCreation + 1;
-                
-                const isCurrentDay = selectedNode.page_number === currentActiveDay;
-                const reachedLimit = selectedNode.wordCount >= selectedNode.wordLimit;
-                
-                return isCurrentDay && !reachedLimit;
-              })() && (
-                <>
-                  {/* Show Review button if there are due words, otherwise Add Words */}
-                  {reviewWords && reviewWords.length > 0 ? (
-                    <TouchableOpacity style={styles.popupReviewBtn} onPress={handleReviewWords}>
-                      <Ionicons name="refresh" size={16} color="white" style={{ marginRight: 8 }} />
-                      <Text style={styles.popupReviewBtnText}>
-                        Review ({reviewWords.length} due)
-                      </Text>
-                    </TouchableOpacity>
-                  ) : (
-                    <TouchableOpacity style={styles.popupAddWordsBtn} onPress={handleAddWords}>
-                      <Text style={styles.popupAddWordsBtnText}>Add Words</Text>
-                    </TouchableOpacity>
-                  )}
-                  
-                  <TouchableOpacity style={styles.popupAddContextBtn} onPress={handleAddContext}>
-                    <Text style={styles.popupAddContextBtnText}>Add Context</Text>
-                  </TouchableOpacity>
-                </>
-              )}
+              <TouchableOpacity 
+                style={[styles.modalButton, styles.cancelButton]} 
+                onPress={() => setShowEditLevelModal(false)}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
             </View>
           </View>
-        </TouchableOpacity>
+        </View>
       </Modal>
+
+      {/* Add Context Modal */}
+      <Modal
+        visible={showContextModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowContextModal(false)}
+      >
+        <KeyboardAvoidingView 
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+        >
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitleCentered}>Add Page Context</Text>
+            <Text style={styles.contextSubtitle}>
+              Add notes about where you found these words or any other context for Lesson {selectedPageNumber}
+            </Text>
+            
+            <TextInput
+              style={[styles.input, styles.contextInput]}
+              placeholder="e.g., 'Found these words in Chapter 5 of my textbook' or 'Words from today's news article'"
+              value={contextText}
+              onChangeText={setContextText}
+              multiline={true}
+              numberOfLines={4}
+              autoFocus
+            />
+            
+            <View style={styles.modalButtons}>
+              <TouchableOpacity 
+                style={[styles.modalButton, styles.submitButton]} 
+                onPress={handleSaveContext}
+              >
+                <Text style={styles.submitButtonText}>Save Context</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={[styles.modalButton, styles.cancelButton]} 
+                onPress={() => setShowContextModal(false)}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
-    backgroundColor: '#f8f9fa',
+    ...CommonStyles.page,
+    backgroundColor: Colors.white,
   },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 60,
-    paddingBottom: 20,
-    backgroundColor: 'white',
-  },
-  headerCenter: {
-    flex: 1,
+  headerTitleContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    maxWidth: 250,
+  },
+  headerFlag: {
+    width: 24,
+    height: 16,
+    borderRadius: 4,
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
   },
   headerTitle: {
+    ...Typography.headerMedium,
+    color: Colors.textBody,
     fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-    marginLeft: 8,
+    flex: 1,
   },
-  streakContainer: {
+  rightHeaderGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginHorizontal: 10,
+  },
+  streakContainer: {
+    ...Effects3D.streakContainer,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: BorderRadius.xlarge,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    marginRight: Spacing.sm,
   },
   streakText: {
-    fontSize: 16,
-    fontWeight: '600',
+    ...Typography.streakText,
+  },
+  optionsButton: {
+    padding: Spacing.xs,
   },
   brokenStreakText: {
-    color: '#999',
+    color: Colors.textLight,
     opacity: 0.7,
   },
   pendingStreakText: {
-    color: '#999',
+    color: Colors.textLight,
     opacity: 0.6,
   },
   flagEmoji: {
     fontSize: 20,
   },
-  roadmapContainer: {
-    padding: 20,
-    paddingTop: 60,
-    paddingBottom: 150,
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
+  },
+  loadingText: {
+    ...Typography.titleLarge,
+    color: Colors.textMuted,
+  },
+  roadmapScrollView: {
+    flex: 1,
+  },
+  roadmapContainer: {
+    position: 'relative',
+    minHeight: 200 * 100 + 300, // Height for all 200 nodes + extra space
+    paddingBottom: 150,
+  },
+  roadmapPath: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    zIndex: 0, // Behind the nodes
   },
   roadmapNode: {
-    marginBottom: 60,
-    width: '100%',
-    alignItems: 'center',
-  },
-  nodePosition1: {
-    alignItems: 'flex-start',
-    paddingLeft: 10,  // Column 1 - Far left edge (10000)
-  },
-  nodePosition2: {
-    alignItems: 'flex-start',  
-    paddingLeft: '20%',  // Column 2 - Left side (01000)
-  },
-  nodePosition3: {
-    alignItems: 'center',  // Column 3 - Perfect center (00100)
-  },
-  nodePosition4: {
-    alignItems: 'flex-end',
-    paddingRight: '20%',  // Column 4 - Right side (00010)
-  },
-  nodePosition5: {
-    alignItems: 'flex-end',
-    paddingRight: 10,  // Column 5 - Far right edge (00001)
+    width: 80,
+    height: 80,
+    zIndex: 1, // Above the path
   },
   lessonCircle: {
-    width: 92,
-    height: 92,
-    borderRadius: 46,
+    ...Effects3D.badge,
+    width: 80,
+    height: 80,
+    borderRadius: 40,
     justifyContent: 'center',
     alignItems: 'center',
   },
   // Word Count Based Circle States
   activeCircle: {
-    backgroundColor: '#FF4444', // Red - Today's lesson, no words yet
+    backgroundColor: Colors.error,
+    borderColor: Colors.error,
+    borderBottomColor: Colors.errorDark,
   },
   partialCircle: {
-    backgroundColor: '#FFD700', // Yellow - Some words, under limit
+    backgroundColor: Colors.warning,
+    borderColor: Colors.warning,
+    borderBottomColor: Colors.primaryDark,
   },
   completedCircle: {
-    backgroundColor: '#4CAF50', // Green - Reached word limit
+    backgroundColor: Colors.success,
+    borderColor: Colors.success,
+    borderBottomColor: Colors.successDark,
   },
   missedCircle: {
-    backgroundColor: '#E0E0E0', // Gray - Missed day, no words
+    backgroundColor: '#D1D5DB',
+    borderColor: '#D1D5DB',
+    borderBottomColor: '#9CA3AF',
   },
   lockedCircle: {
-    backgroundColor: '#E0E0E0', // Gray - Future lesson
+    backgroundColor: '#D1D5DB',
+    borderColor: '#D1D5DB',
+    borderBottomColor: '#9CA3AF',
   },
   lessonNumber: {
     fontSize: 31,
@@ -680,75 +981,97 @@ const styles = StyleSheet.create({
   },
   // Text colors for different states
   activeText: {
-    color: 'white', // White text on red background
+    color: Colors.white,
   },
   partialText: {
-    color: '#333', // Dark text on yellow background
+    color: Colors.textBody,
   },
   completedText: {
-    color: 'white', // White text on green background
+    color: Colors.white,
   },
   missedText: {
-    color: '#999', // Gray text on gray background
+    color: Colors.textLight,
   },
   lockedText: {
-    color: '#999', // Gray text on gray background
+    color: Colors.textLight,
   },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'center',
     alignItems: 'center',
+    paddingHorizontal: 20,
   },
   modalContent: {
-    width: '90%',
-    backgroundColor: 'white',
-    borderRadius: 20,
-    padding: 24,
-    elevation: 5,
-    minHeight: 280,
+    ...Effects3D.card,
+    width: '100%',
+    maxWidth: 400,
+    borderRadius: BorderRadius.xlarge,
+    padding: Spacing.xl,
+    maxHeight: '80%', // Prevent modal from being too tall
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.xl,
   },
   modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginBottom: 20,
+    ...Typography.headerSmall,
+    textAlign: 'left',
+    flex: 1,
+  },
+  modalTitleCentered: {
+    ...Typography.headerSmall,
+    marginBottom: Spacing.md,
     textAlign: 'center',
   },
+  contextSubtitle: {
+    ...Typography.body,
+    color: Colors.textMuted,
+    marginBottom: Spacing.lg,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  contextInput: {
+    minHeight: 100,
+    textAlignVertical: 'top',
+  },
+  closeButton: {
+    padding: 4,
+  },
   input: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
+    ...Effects3D.input,
+    borderRadius: BorderRadius.small,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
+    marginBottom: Spacing.lg,
     fontSize: 16,
   },
   modalButtons: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: 10,
+    marginTop: Spacing.sm,
+    gap: Spacing.sm,
   },
   modalButton: {
+    ...Effects3D.button,
     flex: 1,
-    paddingVertical: 12,
-    borderRadius: 8,
+    borderRadius: BorderRadius.small,
     alignItems: 'center',
-    marginHorizontal: 5,
+    paddingVertical: Spacing.md,
   },
   submitButton: {
-    backgroundColor: '#FFA500',
+    ...Effects3D.buttonPrimary,
   },
   cancelButton: {
-    backgroundColor: '#FF4444',
+    ...Effects3D.buttonDanger,
   },
   submitButtonText: {
-    color: 'white',
-    fontWeight: '600',
-    fontSize: 16,
+    ...Typography.buttonMedium,
   },
   cancelButtonText: {
-    color: 'white',
-    fontWeight: '600',
-    fontSize: 16,
+    ...Typography.buttonMedium,
     textAlign: 'center',
   },
   optionButton: {
@@ -773,75 +1096,141 @@ const styles = StyleSheet.create({
   deleteButtonText: {
     color: '#FF4444',
   },
-  popupOverlay: {
-    flex: 1,
-    backgroundColor: 'transparent',
+  optionsCancelButton: {
+    backgroundColor: '#E5E7EB',
+    borderColor: '#D1D5DB',
+    borderBottomColor: '#9CA3AF',
+    borderWidth: 2,
+    borderBottomWidth: 4,
   },
-  nodePopupContainer: {
+  optionsCancelButtonText: {
+    ...Typography.buttonMedium,
+    color: '#374151',
+    textAlign: 'center',
+    fontWeight: '700',
+    fontSize: 16,
+  },
+  levelOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    marginBottom: 8,
+    backgroundColor: '#f8f9fa',
+    width: '100%',
+  },
+  levelOptionSelected: {
+    backgroundColor: '#FFF8F0',
+  },
+  levelOptionText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 2,
+  },
+  levelOptionTextSelected: {
+    color: Colors.primary,
+  },
+  levelDescription: {
+    fontSize: 14,
+    color: '#666',
+  },
+  levelDescriptionSelected: {
+    color: Colors.primaryDark,
+  },
+  embeddedPopup: {
     position: 'absolute',
+    zIndex: 2, // Relative to the elevated node container
+  },
+  popupCloseOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 500, // Between active node (1000) and inactive nodes (1)
+    elevation: 500, // Android elevation
+  },
+  popupArrow: {
+    position: 'absolute',
+    bottom: -12,
+    left: 90, // Center of popup (200px width / 2 - 10px arrow width / 2)
+    width: 0,
+    height: 0,
+    borderLeftWidth: 12,
+    borderRightWidth: 12,
+    borderTopWidth: 12,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderTopColor: Colors.white,
+    borderStyle: 'solid',
+    // Add border to make it more visible
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 3,
   },
   nodePopupContent: {
-    backgroundColor: 'white',
-    borderRadius: 14,
-    padding: 14,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 5,
-    minWidth: 167,
+    ...Effects3D.card,
+    backgroundColor: Colors.white,
+    borderRadius: BorderRadius.large,
+    padding: Spacing.lg,
+    minWidth: 200,
+    maxWidth: 240,
   },
   nodePopupTitle: {
-    fontSize: 15,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 4,
+    ...Typography.titleMedium,
+    marginBottom: Spacing.xs,
   },
   nodePopupSubtitle: {
-    fontSize: 12,
-    color: '#666',
-    marginBottom: 14,
+    ...Typography.captionBold,
+    color: Colors.textMuted,
+    marginBottom: Spacing.md,
+    textTransform: 'none',
   },
   popupAddWordsBtn: {
-    backgroundColor: '#FFA500',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 7,
-    marginBottom: 6,
+    ...Effects3D.button,
+    ...Effects3D.buttonPrimary,
+    borderRadius: BorderRadius.small,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.lg,
+    marginBottom: Spacing.sm,
     alignItems: 'center',
   },
   popupAddWordsBtnText: {
-    color: 'white',
-    fontWeight: '600',
-    fontSize: 12,
+    ...Typography.buttonMedium,
+    fontSize: 14,
   },
   popupReviewBtn: {
-    backgroundColor: '#4CAF50',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 7,
-    marginBottom: 6,
+    ...Effects3D.button,
+    ...Effects3D.buttonSuccess,
+    borderRadius: BorderRadius.small,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.lg,
+    marginBottom: Spacing.sm,
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'center',
   },
   popupReviewBtnText: {
-    color: 'white',
-    fontWeight: '600',
-    fontSize: 12,
+    ...Typography.buttonMedium,
+    fontSize: 14,
   },
   popupAddContextBtn: {
-    backgroundColor: 'transparent',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 7,
-    borderWidth: 1,
-    borderColor: '#ddd',
+    ...Effects3D.button,
+    backgroundColor: Colors.white,
+    borderColor: Colors.border,
+    borderBottomColor: Colors.borderDark,
+    borderRadius: BorderRadius.small,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.lg,
     alignItems: 'center',
   },
   popupAddContextBtnText: {
-    color: '#666',
-    fontWeight: '600',
-    fontSize: 12,
+    ...Typography.buttonMedium,
+    color: Colors.textBody,
+    fontSize: 14,
   },
 });

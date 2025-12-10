@@ -8,16 +8,201 @@ import {
   Dimensions,
   Animated,
   PanResponder,
+  Modal,
+  FlatList,
 } from 'react-native';
+import Svg, { Circle } from 'react-native-svg';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useReviewWords, useUpdateWordReview } from '../../../lib/database-hooks';
+import { useReviewWords, useUpdateWordReview, usePageTitle } from '../../../lib/database-hooks';
 import { useCurrentTime } from '../../../lib/time-provider';
+import { Colors, Spacing, BorderRadius, Typography, Effects3D, CommonStyles, ButtonStyles } from '../../../styles/theme';
+import { Header } from '../../../components/Header';
+
+// Helper function to render text with **bold** markdown formatting
+function renderTextWithBold(text: string, baseStyle: any, boldStyle?: any) {
+  if (!text) return null;
+  
+  // Split text by **bold** patterns
+  const parts = text.split(/(\*\*.*?\*\*)/g);
+  
+  return (
+    <Text style={baseStyle}>
+      {parts.map((part, index) => {
+        // Check if part is bold (wrapped in **)
+        if (part.startsWith('**') && part.endsWith('**')) {
+          const boldText = part.slice(2, -2); // Remove ** from both ends
+          return (
+            <Text key={index} style={[baseStyle, { fontWeight: 'bold' }, boldStyle]}>
+              {boldText}
+            </Text>
+          );
+        } else {
+          return part;
+        }
+      })}
+    </Text>
+  );
+}
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 const CARD_WIDTH = screenWidth * 0.85;
 const CARD_HEIGHT = screenHeight * 0.5;
 const SWIPE_THRESHOLD = screenWidth * 0.3;
+
+// Circular Progress Component
+interface CircularProgressProps {
+  percentage: number;
+  size?: number;
+  strokeWidth?: number;
+  color: string;
+  backgroundColor?: string;
+  showText?: boolean;
+  textSize?: number;
+}
+
+function CircularProgress({ 
+  percentage, 
+  size = 60, 
+  strokeWidth = 6, 
+  color, 
+  backgroundColor = '#E0E0E0',
+  showText = true,
+  textSize = 12
+}: CircularProgressProps) {
+  const radius = (size - strokeWidth) / 2;
+  const circumference = radius * 2 * Math.PI;
+  const strokeDasharray = circumference;
+  const strokeDashoffset = circumference - (percentage / 100) * circumference;
+
+  return (
+    <View style={[styles.circularProgress, { width: size, height: size }]}>
+      <Svg width={size} height={size}>
+        {/* Background Circle */}
+        <Circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          stroke={backgroundColor}
+          strokeWidth={strokeWidth}
+          fill="none"
+        />
+        {/* Progress Circle */}
+        <Circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          stroke={color}
+          strokeWidth={strokeWidth}
+          fill="none"
+          strokeDasharray={strokeDasharray}
+          strokeDashoffset={strokeDashoffset}
+          strokeLinecap="round"
+          transform={`rotate(-90 ${size / 2} ${size / 2})`}
+        />
+      </Svg>
+      {showText && (
+        <View style={styles.progressTextContainer}>
+          <Text style={[styles.progressText, { fontSize: textSize, color }]}>
+            {Math.round(percentage)}%
+          </Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+// Page Context Display Component
+function PageContextDisplay({ notebookId, pageNumber }: { notebookId: string, pageNumber: number }) {
+  const { data: pageTitle } = usePageTitle(notebookId, pageNumber);
+  
+  if (!pageTitle) return null;
+  
+  return (
+    <View style={styles.contextContainer}>
+      <Text style={styles.contextText}>
+        Context: {pageTitle}
+      </Text>
+    </View>
+  );
+}
+
+// Word List Modal Component (Bottom Sheet)
+interface WordListModalProps {
+  visible: boolean;
+  onClose: () => void;
+  words: any[];
+  title: string;
+  type: 'remembered' | 'forgotten';
+}
+
+function WordListModal({ visible, onClose, words, title, type }: WordListModalProps) {
+  const renderWordItem = ({ item }: { item: any }) => {
+    const cardColors = getCardColors(item?.stage, item?.round);
+    
+    return (
+      <View style={[styles.wordItem, { borderLeftColor: cardColors.borderColor }]}>
+        <View style={styles.wordHeader}>
+          <Text style={[styles.wordTerm, { color: cardColors.textColor }]}>{item.term}</Text>
+          <View style={styles.stageRoundBadge}>
+            <Text style={styles.badgeText}>{cardColors.badgeEmoji}</Text>
+            <Text style={[styles.stageRoundText, { color: cardColors.textColor }]}>
+              {item.stage?.toUpperCase()} R{item.round}
+            </Text>
+          </View>
+        </View>
+        <Text style={styles.wordDefinition}>{item.definition}</Text>
+        {item.example_sentence && (
+          <View style={styles.wordExample}>
+            {renderTextWithBold(
+              item.example_sentence,
+              [styles.exampleText, { color: cardColors.textColor, opacity: 0.8 }]
+            )}
+          </View>
+        )}
+      </View>
+    );
+  };
+
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      onRequestClose={onClose}
+      presentationStyle="pageSheet"
+    >
+      <SafeAreaView style={styles.modalContainer}>
+        <Header 
+          title={title}
+          noPadding={true}
+          leftElement={
+            <TouchableOpacity onPress={onClose}>
+              <Ionicons name="arrow-back" size={24} color="#333" />
+            </TouchableOpacity>
+          }
+        />
+        
+        <View style={styles.modalContent}>
+          {words.length === 0 ? (
+            <View style={styles.emptyWordsList}>
+              <Text style={styles.emptyWordsText}>
+                No {type} words in this session
+              </Text>
+            </View>
+          ) : (
+            <FlatList
+              data={words}
+              renderItem={renderWordItem}
+              keyExtractor={(item, index) => `${item.id}-${index}`}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.wordsList}
+            />
+          )}
+        </View>
+      </SafeAreaView>
+    </Modal>
+  );
+}
 
 // Color system for cards based on stage and round
 function getCardColors(stage: string, round: number) {
@@ -25,22 +210,22 @@ function getCardColors(stage: string, round: number) {
   
   const colorMap = {
     bronze: {
-      1: { backgroundColor: '#FF4444', textColor: '#FFFFFF', badgeEmoji: '🥉' },
-      2: { backgroundColor: '#4CAF50', textColor: '#FFFFFF', badgeEmoji: '🥉' },
-      3: { backgroundColor: '#2196F3', textColor: '#FFFFFF', badgeEmoji: '🥉' },
-      4: { backgroundColor: '#FFD700', textColor: '#333333', badgeEmoji: '🥉' },
+      1: { backgroundColor: '#FFECEC', borderColor: '#FF4444', borderBottomColor: '#D32F2F', progressColor: '#FF4444', textColor: '#333333', badgeEmoji: '🥉' },
+      2: { backgroundColor: '#E8F6E8', borderColor: '#4CAF50', borderBottomColor: '#388E3C', progressColor: '#4CAF50', textColor: '#333333', badgeEmoji: '🥉' },
+      3: { backgroundColor: '#E3F2FD', borderColor: '#2196F3', borderBottomColor: '#1976D2', progressColor: '#2196F3', textColor: '#333333', badgeEmoji: '🥉' },
+      4: { backgroundColor: '#FFFDE7', borderColor: '#FFD700', borderBottomColor: '#F57F17', progressColor: '#FFD700', textColor: '#333333', badgeEmoji: '🥉' },
     },
     silver: {
-      1: { backgroundColor: '#FF9800', textColor: '#FFFFFF', badgeEmoji: '🥈' },
-      2: { backgroundColor: '#E91E63', textColor: '#FFFFFF', badgeEmoji: '🥈' },
-      3: { backgroundColor: '#9E9E9E', textColor: '#FFFFFF', badgeEmoji: '🥈' },
-      4: { backgroundColor: '#F5F5F5', textColor: '#333333', badgeEmoji: '🥈' },
+      1: { backgroundColor: '#FFF3E0', borderColor: '#FF9800', borderBottomColor: '#F57C00', progressColor: '#FF9800', textColor: '#333333', badgeEmoji: '🥈' },
+      2: { backgroundColor: '#FCE4EC', borderColor: '#E91E63', borderBottomColor: '#C2185B', progressColor: '#E91E63', textColor: '#333333', badgeEmoji: '🥈' },
+      3: { backgroundColor: '#F5F5F5', borderColor: '#9E9E9E', borderBottomColor: '#757575', progressColor: '#9E9E9E', textColor: '#333333', badgeEmoji: '🥈' },
+      4: { backgroundColor: '#FAFAFA', borderColor: '#E0E0E0', borderBottomColor: '#BDBDBD', progressColor: '#E0E0E0', textColor: '#333333', badgeEmoji: '🥈' },
     },
     gold: {
-      1: { backgroundColor: '#FF6F00', textColor: '#FFFFFF', badgeEmoji: '🥇' },
-      2: { backgroundColor: '#8D6E63', textColor: '#FFFFFF', badgeEmoji: '🥇' },
-      3: { backgroundColor: '#81D4FA', textColor: '#333333', badgeEmoji: '🥇' },
-      4: { backgroundColor: '#C8E6C9', textColor: '#333333', badgeEmoji: '🥇' },
+      1: { backgroundColor: '#FFF8E1', borderColor: '#FF6F00', borderBottomColor: '#E65100', progressColor: '#FF6F00', textColor: '#333333', badgeEmoji: '🥇' },
+      2: { backgroundColor: '#EFEBE9', borderColor: '#8D6E63', borderBottomColor: '#5D4037', progressColor: '#8D6E63', textColor: '#333333', badgeEmoji: '🥇' },
+      3: { backgroundColor: '#F0F8FF', borderColor: '#81D4FA', borderBottomColor: '#29B6F6', progressColor: '#81D4FA', textColor: '#333333', badgeEmoji: '🥇' },
+      4: { backgroundColor: '#F1F8E9', borderColor: '#C8E6C9', borderBottomColor: '#81C784', progressColor: '#C8E6C9', textColor: '#333333', badgeEmoji: '🥇' },
     },
   };
 
@@ -67,7 +252,11 @@ function CardContent({ word, isInteractive = false, isFlipped = false, onFlip }:
   if (!word) {
     return (
       <TouchableOpacity 
-        style={[styles.card, { backgroundColor: cardColors.backgroundColor }]} 
+        style={[styles.card, { 
+          backgroundColor: cardColors.backgroundColor,
+          borderColor: cardColors.borderColor,
+          borderBottomColor: cardColors.borderBottomColor
+        }]} 
         onPress={isInteractive ? onFlip : undefined}
         activeOpacity={isInteractive ? 0.9 : 1}
         disabled={!isInteractive}
@@ -86,7 +275,11 @@ function CardContent({ word, isInteractive = false, isFlipped = false, onFlip }:
 
   return (
     <TouchableOpacity 
-      style={[styles.card, { backgroundColor: cardColors.backgroundColor }]} 
+      style={[styles.card, { 
+        backgroundColor: cardColors.backgroundColor,
+        borderColor: cardColors.borderColor,
+        borderBottomColor: cardColors.borderBottomColor
+      }]} 
       onPress={isInteractive ? onFlip : undefined}
       activeOpacity={isInteractive ? 0.9 : 1}
       disabled={!isInteractive}
@@ -105,6 +298,14 @@ function CardContent({ word, isInteractive = false, isFlipped = false, onFlip }:
             </View>
             <View style={styles.termContainer}>
               <Text style={[styles.term, { color: cardColors.textColor }]}>{word?.term || 'No term'}</Text>
+              {word?.example_sentence && (
+                <View style={styles.exampleContainer}>
+                  {renderTextWithBold(
+                    word.example_sentence,
+                    [styles.example, { color: cardColors.textColor, opacity: 0.8 }]
+                  )}
+                </View>
+              )}
             </View>
             {isInteractive && (
               <Text style={[styles.flipHint, { color: cardColors.textColor, opacity: 0.7 }]}>Tap to reveal definition</Text>
@@ -118,11 +319,6 @@ function CardContent({ word, isInteractive = false, isFlipped = false, onFlip }:
             </View>
             <View style={styles.definitionContainer}>
               <Text style={[styles.definition, { color: cardColors.textColor }]}>{word?.definition || 'No definition'}</Text>
-              {word?.example_sentence && (
-                <Text style={[styles.example, { color: cardColors.textColor, opacity: 0.8 }]}>
-                  Example: {word.example_sentence}
-                </Text>
-              )}
             </View>
             {isInteractive && (
               <Text style={[styles.flipHint, { color: cardColors.textColor, opacity: 0.7 }]}>Swipe or use buttons below</Text>
@@ -145,15 +341,22 @@ export default function ReviewScreen() {
   const [currentCardIndex, setCurrentCardIndex] = useState(0);
   const [isCardFlipped, setIsCardFlipped] = useState(false);
   
+  // Modal states for word lists
+  const [showRememberedModal, setShowRememberedModal] = useState(false);
+  const [showForgottenModal, setShowForgottenModal] = useState(false);
+  
   // Static session snapshot to prevent word skipping
   const [sessionWords, setSessionWords] = useState<any[]>([]);
   const [sessionInitialized, setSessionInitialized] = useState(false);
   
-  // Session statistics tracking
+  // Enhanced session statistics tracking
   const [sessionStats, setSessionStats] = useState({
     remembered: 0,
     forgotten: 0,
-    startTime: Date.now()
+    startTime: Date.now(),
+    rememberedWords: [] as any[],
+    forgottenWords: [] as any[],
+    stageRoundStats: {} as Record<string, { remembered: number; total: number }>
   });
   
   // Animation values using built-in Animated API
@@ -215,12 +418,37 @@ export default function ReviewScreen() {
   const handleReviewResult = (remembered: boolean) => {
     if (!currentWord) return;
 
-    // Update session statistics
-    setSessionStats(prev => ({
-      ...prev,
-      remembered: prev.remembered + (remembered ? 1 : 0),
-      forgotten: prev.forgotten + (remembered ? 0 : 1)
-    }));
+    // Create stage-round key for tracking
+    const stageRoundKey = `${currentWord.stage}-${currentWord.round}`;
+
+    // Update enhanced session statistics
+    setSessionStats(prev => {
+      const newStageRoundStats = { ...prev.stageRoundStats };
+      
+      // Initialize stage-round if not exists
+      if (!newStageRoundStats[stageRoundKey]) {
+        newStageRoundStats[stageRoundKey] = { remembered: 0, total: 0 };
+      }
+      
+      // Update stage-round stats
+      newStageRoundStats[stageRoundKey].total += 1;
+      if (remembered) {
+        newStageRoundStats[stageRoundKey].remembered += 1;
+      }
+
+      return {
+        ...prev,
+        remembered: prev.remembered + (remembered ? 1 : 0),
+        forgotten: prev.forgotten + (remembered ? 0 : 1),
+        rememberedWords: remembered 
+          ? [...prev.rememberedWords, currentWord]
+          : prev.rememberedWords,
+        forgottenWords: !remembered 
+          ? [...prev.forgottenWords, currentWord]
+          : prev.forgottenWords,
+        stageRoundStats: newStageRoundStats
+      };
+    });
 
     // Fire-and-forget database update (instant UI, background sync)
     updateWordReview.mutate({
@@ -343,13 +571,15 @@ export default function ReviewScreen() {
   if (!sessionWords || sessionWords.length === 0) {
     return (
       <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={24} color="#333" />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Review</Text>
-          <View style={{ width: 24 }} />
-        </View>
+        <Header 
+          title="Review"
+          noPadding={true}
+          leftElement={
+            <TouchableOpacity onPress={() => router.back()}>
+              <Ionicons name="arrow-back" size={24} color="#333" />
+            </TouchableOpacity>
+          }
+        />
         
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyIcon}>🎉</Text>
@@ -371,102 +601,148 @@ export default function ReviewScreen() {
   if (isSessionComplete) {
     const totalReviewed = sessionStats.remembered + sessionStats.forgotten;
     const successRate = totalReviewed > 0 ? Math.round((sessionStats.remembered / totalReviewed) * 100) : 0;
-    const sessionDuration = Math.round((Date.now() - sessionStats.startTime) / 1000 / 60); // minutes
+    
+    // Helper function to render stage-round progress bars
+    const renderStageRounds = (stage: string, emoji: string) => {
+      const rounds = [1, 2, 3, 4];
+      const stageRounds = rounds
+        .map(round => {
+          const key = `${stage}-${round}`;
+          const stats = sessionStats.stageRoundStats[key];
+          return stats ? { round, ...stats, key } : null;
+        })
+        .filter(Boolean);
+      
+      // Only render if there are words for this stage
+      if (stageRounds.length === 0) return null;
+      
+      return (
+        <View key={stage} style={styles.stageSection}>
+          <View style={styles.stageHeader}>
+            <Text style={styles.stageEmoji}>{emoji}</Text>
+            <Text style={styles.stageTitle}>{stage.toUpperCase()}</Text>
+          </View>
+          <View style={styles.roundsContainer}>
+            {stageRounds.map((roundData: any) => {
+              const percentage = (roundData.remembered / roundData.total) * 100;
+              const cardColors = getCardColors(stage, roundData.round);
+              
+              return (
+                <View key={roundData.key} style={styles.roundItem}>
+                  <CircularProgress
+                    percentage={percentage}
+                    size={50}
+                    strokeWidth={5}
+                    color={cardColors.progressColor}
+                    textSize={10}
+                  />
+                  <Text style={styles.roundLabel}>R{roundData.round}</Text>
+                </View>
+              );
+            })}
+          </View>
+        </View>
+      );
+    };
     
     return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={24} color="#333" />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Review Summary</Text>
-          <View style={{ width: 24 }} />
-        </View>
-        
-        <View style={styles.summaryContainer}>
-          <Text style={styles.summaryTitle}>🎉 Session Complete!</Text>
+      <>
+        <SafeAreaView style={styles.container}>
+          <Header 
+            title="Review Summary"
+            noPadding={true}
+            leftElement={
+              <TouchableOpacity onPress={() => router.back()}>
+                <Ionicons name="arrow-back" size={24} color="#333" />
+              </TouchableOpacity>
+            }
+          />
           
-          {/* Main Stats */}
-          <View style={styles.mainStatsContainer}>
-            <View style={styles.statCard}>
-              <Text style={styles.statNumber}>{totalReviewed}</Text>
-              <Text style={styles.statLabel}>Words Reviewed</Text>
+          <View style={styles.newSummaryContainer}>
+            {/* Congrats Message */}
+            <Text style={styles.newSummaryTitle}>🎉 Great Job!</Text>
+            
+            {/* Overall Score Circle */}
+            <View style={styles.overallScoreSection}>
+              <CircularProgress
+                percentage={successRate}
+                size={120}
+                strokeWidth={8}
+                color={successRate >= 70 ? '#4CAF50' : successRate >= 50 ? '#FF9800' : '#F44336'}
+                textSize={18}
+              />
+              <Text style={styles.overallScoreLabel}>
+                {sessionStats.remembered}/{totalReviewed} words mastered
+              </Text>
             </View>
-            <View style={styles.statCard}>
-              <Text style={[styles.statNumber, { color: '#4CAF50' }]}>{sessionStats.remembered}</Text>
-              <Text style={styles.statLabel}>Remembered</Text>
+            
+            {/* Stage-Round Breakdown */}
+            <View style={styles.stageBreakdownSection}>
+              {renderStageRounds('bronze', '🥉')}
+              {renderStageRounds('silver', '🥈')}
+              {renderStageRounds('gold', '🥇')}
             </View>
-            <View style={styles.statCard}>
-              <Text style={[styles.statNumber, { color: '#F44336' }]}>{sessionStats.forgotten}</Text>
-              <Text style={styles.statLabel}>Forgotten</Text>
+            
+            {/* Action Buttons */}
+            <View style={styles.newSummaryActions}>
+              <TouchableOpacity 
+                style={[styles.newActionButton, styles.rememberedButton]}
+                onPress={() => setShowRememberedModal(true)}
+              >
+                <Text style={styles.newActionButtonText}>Remembered Words</Text>
+                <Text style={styles.actionButtonCount}>({sessionStats.remembered})</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={[styles.newActionButton, styles.forgottenButton]}
+                onPress={() => setShowForgottenModal(true)}
+              >
+                <Text style={styles.newActionButtonText}>Forgotten Words</Text>
+                <Text style={styles.actionButtonCount}>({sessionStats.forgotten})</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={[styles.newActionButton, styles.backButton]}
+                onPress={() => router.back()}
+              >
+                <Text style={styles.newActionButtonText}>Back to Notebook</Text>
+              </TouchableOpacity>
             </View>
           </View>
-
-          {/* Progress Bar */}
-          <View style={styles.progressSection}>
-            <Text style={styles.progressTitle}>Success Rate: {successRate}%</Text>
-            <View style={styles.progressBarContainer}>
-              <View style={styles.progressBarBg}>
-                <View 
-                  style={[
-                    styles.progressBarFill, 
-                    { width: `${successRate}%`, backgroundColor: successRate >= 70 ? '#4CAF50' : successRate >= 50 ? '#FF9800' : '#F44336' }
-                  ]} 
-                />
-              </View>
-            </View>
-          </View>
-
-          {/* Session Info */}
-          <View style={styles.sessionInfoContainer}>
-            <View style={styles.sessionInfoRow}>
-              <Ionicons name="time-outline" size={20} color="#666" />
-              <Text style={styles.sessionInfoText}>Duration: {sessionDuration} min</Text>
-            </View>
-            {successRate >= 80 && (
-              <View style={styles.sessionInfoRow}>
-                <Ionicons name="trophy-outline" size={20} color="#FFD700" />
-                <Text style={styles.sessionInfoText}>Excellent performance! 🌟</Text>
-              </View>
-            )}
-            {successRate >= 70 && successRate < 80 && (
-              <View style={styles.sessionInfoRow}>
-                <Ionicons name="checkmark-circle-outline" size={20} color="#4CAF50" />
-                <Text style={styles.sessionInfoText}>Good job! Keep it up! 👍</Text>
-              </View>
-            )}
-            {successRate < 70 && (
-              <View style={styles.sessionInfoRow}>
-                <Ionicons name="refresh-outline" size={20} color="#FF9800" />
-                <Text style={styles.sessionInfoText}>Review these words again soon 📚</Text>
-              </View>
-            )}
-          </View>
-
-          {/* Actions */}
-          <View style={styles.summaryActions}>
-            <TouchableOpacity 
-              style={[styles.summaryButton, styles.primaryButton]}
-              onPress={() => router.back()}
-            >
-              <Text style={styles.summaryButtonText}>Back to Notebook</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </SafeAreaView>
+        </SafeAreaView>
+        
+        {/* Word List Modals */}
+        <WordListModal
+          visible={showRememberedModal}
+          onClose={() => setShowRememberedModal(false)}
+          words={sessionStats.rememberedWords}
+          title="Remembered Words"
+          type="remembered"
+        />
+        
+        <WordListModal
+          visible={showForgottenModal}
+          onClose={() => setShowForgottenModal(false)}
+          words={sessionStats.forgottenWords}
+          title="Forgotten Words"
+          type="forgotten"
+        />
+      </>
     );
   }
 
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color="#333" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Review</Text>
-        <View style={{ width: 24 }} />
-      </View>
+      <Header 
+        title="Review"
+        noPadding={true}
+        leftElement={
+          <TouchableOpacity onPress={() => router.back()}>
+            <Ionicons name="arrow-back" size={24} color="#333" />
+          </TouchableOpacity>
+        }
+      />
 
       {/* Progress Bar */}
       <View style={styles.progressContainer}>
@@ -477,7 +753,10 @@ export default function ReviewScreen() {
           <View 
             style={[
               styles.progressFill, 
-              { width: `${(Math.min(currentCardIndex + 1, sessionWords.length) / sessionWords.length) * 100}%` }
+              { 
+                width: `${(Math.min(currentCardIndex + 1, sessionWords.length) / sessionWords.length) * 100}%`,
+                backgroundColor: currentWord ? getCardColors(currentWord.stage, currentWord.round).progressColor : Colors.primary
+              }
             ]} 
           />
         </View>
@@ -485,6 +764,11 @@ export default function ReviewScreen() {
           {remainingCount} left
         </Text>
       </View>
+
+      {/* Page Context */}
+      {currentWord?.pages?.page_number && (
+        <PageContextDisplay notebookId={id as string} pageNumber={currentWord.pages.page_number} />
+      )}
 
       {/* Stacked Card Container */}
       <View style={styles.cardContainer}>
@@ -559,6 +843,13 @@ export default function ReviewScreen() {
         })}
       </View>
 
+      {/* Swipe Instructions */}
+      <View style={styles.instructionsContainer}>
+        <Text style={styles.instructionText}>
+          💡 Swipe left if you forgot • Swipe right if you remembered
+        </Text>
+      </View>
+
       {/* Control Buttons */}
       <View style={styles.controlsContainer}>
         <TouchableOpacity 
@@ -568,18 +859,14 @@ export default function ReviewScreen() {
             nextCard();
           }}
         >
-          <Ionicons name="close" size={24} color="white" />
-          <Text style={styles.controlButtonText}>Forgot</Text>
+          <Ionicons name="close" size={28} color="white" />
         </TouchableOpacity>
 
         <TouchableOpacity 
           style={[styles.controlButton, styles.revealButton]}
           onPress={flipCard}
         >
-          <Ionicons name="eye" size={24} color="white" />
-          <Text style={styles.controlButtonText}>
-            {isCardFlipped ? 'Hide' : 'Reveal'}
-          </Text>
+          <Ionicons name={isCardFlipped ? "eye-off" : "eye"} size={28} color="white" />
         </TouchableOpacity>
 
         <TouchableOpacity 
@@ -589,8 +876,7 @@ export default function ReviewScreen() {
             nextCard();
           }}
         >
-          <Ionicons name="checkmark" size={24} color="white" />
-          <Text style={styles.controlButtonText}>Remembered</Text>
+          <Ionicons name="checkmark" size={28} color="white" />
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -599,8 +885,7 @@ export default function ReviewScreen() {
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
-    backgroundColor: '#f8f9fa',
+    ...CommonStyles.page,
   },
   loadingContainer: {
     flex: 1,
@@ -608,61 +893,65 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   loadingText: {
-    fontSize: 18,
-    color: '#666',
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: 'white',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
+    ...Typography.titleLarge,
+    color: Colors.textMuted,
   },
   progressContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: 'white',
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.md,
   },
   progressText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
+    ...Typography.titleMedium,
     minWidth: 60,
   },
   progressBar: {
     flex: 1,
     height: 8,
-    backgroundColor: '#e0e0e0',
-    borderRadius: 4,
-    marginHorizontal: 12,
+    backgroundColor: Colors.inactive,
+    borderRadius: BorderRadius.small,
+    marginHorizontal: Spacing.md,
     overflow: 'hidden',
   },
   progressFill: {
     height: '100%',
-    backgroundColor: '#4CAF50',
-    borderRadius: 4,
+    borderRadius: BorderRadius.small,
   },
   remainingText: {
-    fontSize: 14,
-    color: '#666',
+    ...Typography.subtitleSmall,
     minWidth: 50,
     textAlign: 'right',
+  },
+  contextContainer: {
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.xs,
+    marginBottom: Spacing.sm,
+  },
+  contextText: {
+    ...Typography.subtitleSmall,
+    color: Colors.textMuted,
+    textAlign: 'center',
+    fontStyle: 'italic',
+  },
+  circularProgress: {
+    position: 'relative',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  progressTextContainer: {
+    position: 'absolute',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  progressText: {
+    fontWeight: 'bold',
   },
   cardContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 20,
+    paddingHorizontal: Spacing.xl,
   },
   cardWrapper: {
     width: CARD_WIDTH,
@@ -676,15 +965,11 @@ const styles = StyleSheet.create({
     zIndex: 1,
   },
   card: {
+    ...Effects3D.card,
     width: '100%',
     height: '100%',
-    backgroundColor: 'white',
-    borderRadius: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 8,
+    backgroundColor: Colors.white,
+    borderRadius: BorderRadius.large,
     position: 'relative',
   },
   overlay: {
@@ -751,6 +1036,11 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#333',
     textAlign: 'center',
+    marginBottom: 16,
+  },
+  exampleContainer: {
+    marginTop: 8,
+    paddingHorizontal: 16,
   },
   definitionContainer: {
     flex: 1,
@@ -775,6 +1065,17 @@ const styles = StyleSheet.create({
     color: '#999',
     textAlign: 'center',
   },
+  instructionsContainer: {
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  instructionText: {
+    fontSize: 14,
+    color: Colors.textMuted,
+    textAlign: 'center',
+    opacity: 0.8,
+  },
   controlsContainer: {
     flexDirection: 'row',
     justifyContent: 'space-around',
@@ -785,27 +1086,32 @@ const styles = StyleSheet.create({
     borderTopColor: '#e0e0e0',
   },
   controlButton: {
+    ...Effects3D.button,
     alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-    minWidth: 100,
-    flex: 1,
-    marginHorizontal: 4,
+    justifyContent: 'center',
+    borderRadius: BorderRadius.large,
+    width: 70,
+    height: 70,
+    marginHorizontal: 8,
   },
   forgotButton: {
     backgroundColor: '#F44336',
+    borderColor: '#F44336',
+    borderBottomColor: '#D32F2F',
   },
   revealButton: {
     backgroundColor: '#2196F3',
+    borderColor: '#2196F3',
+    borderBottomColor: '#1976D2',
   },
   rememberedButton: {
     backgroundColor: '#4CAF50',
+    borderColor: '#4CAF50',
+    borderBottomColor: '#388E3C',
   },
   controlButtonText: {
+    ...Typography.buttonMedium,
     color: 'white',
-    fontSize: 12,
-    fontWeight: '600',
     marginTop: 4,
   },
   emptyContainer: {
@@ -956,5 +1262,165 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     color: 'white',
+  },
+  
+  // New Summary Page Styles
+  newSummaryContainer: {
+    flex: 1,
+    padding: Spacing.xl,
+    backgroundColor: Colors.background,
+  },
+  newSummaryTitle: {
+    ...Typography.headerLarge,
+    textAlign: 'center',
+    marginBottom: Spacing.xxxl,
+    color: Colors.textPrimary,
+  },
+  overallScoreSection: {
+    alignItems: 'center',
+    marginBottom: Spacing.xxxl,
+  },
+  overallScoreLabel: {
+    ...Typography.titleMedium,
+    color: Colors.textMuted,
+    marginTop: Spacing.md,
+    textAlign: 'center',
+  },
+  stageBreakdownSection: {
+    marginBottom: Spacing.xxxl,
+  },
+  stageSection: {
+    marginBottom: Spacing.xl,
+  },
+  stageHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.md,
+  },
+  stageEmoji: {
+    fontSize: 20,
+    marginRight: Spacing.sm,
+  },
+  stageTitle: {
+    ...Typography.titleLarge,
+    color: Colors.textPrimary,
+  },
+  roundsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'flex-start',
+    gap: Spacing.lg,
+    paddingLeft: Spacing.xl,
+  },
+  roundItem: {
+    alignItems: 'center',
+  },
+  roundLabel: {
+    ...Typography.captionBold,
+    marginTop: Spacing.xs,
+    color: Colors.textMuted,
+  },
+  newSummaryActions: {
+    gap: Spacing.md,
+  },
+  newActionButton: {
+    ...Effects3D.button,
+    borderRadius: BorderRadius.large,
+    paddingVertical: Spacing.lg,
+    paddingHorizontal: Spacing.xl,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  rememberedButton: {
+    backgroundColor: Colors.success,
+    borderColor: Colors.success,
+    borderBottomColor: Colors.successDark,
+  },
+  forgottenButton: {
+    backgroundColor: Colors.error,
+    borderColor: Colors.error,
+    borderBottomColor: Colors.errorDark,
+  },
+  backButton: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+    borderBottomColor: Colors.primaryDark,
+  },
+  newActionButtonText: {
+    ...Typography.buttonLarge,
+    color: Colors.white,
+  },
+  actionButtonCount: {
+    ...Typography.buttonMedium,
+    color: Colors.white,
+    opacity: 0.9,
+  },
+  
+  // Modal Styles
+  modalContainer: {
+    flex: 1,
+    backgroundColor: Colors.background,
+  },
+  modalContent: {
+    flex: 1,
+    padding: Spacing.xl,
+  },
+  wordsList: {
+    paddingBottom: Spacing.xl,
+  },
+  wordItem: {
+    ...Effects3D.card,
+    backgroundColor: Colors.white,
+    borderRadius: BorderRadius.medium,
+    padding: Spacing.lg,
+    marginBottom: Spacing.md,
+    borderLeftWidth: 4,
+  },
+  wordHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: Spacing.sm,
+  },
+  wordTerm: {
+    ...Typography.titleLarge,
+    flex: 1,
+    marginRight: Spacing.md,
+  },
+  stageRoundBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+  },
+  badgeText: {
+    fontSize: 16,
+  },
+  stageRoundText: {
+    ...Typography.captionBold,
+    fontSize: 12,
+  },
+  wordDefinition: {
+    ...Typography.body,
+    color: Colors.textBody,
+    marginBottom: Spacing.xs,
+  },
+  wordExample: {
+    marginTop: Spacing.xs,
+  },
+  exampleText: {
+    ...Typography.body,
+    fontSize: 14,
+    fontStyle: 'italic',
+  },
+  emptyWordsList: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  emptyWordsText: {
+    ...Typography.titleMedium,
+    color: Colors.textMuted,
+    textAlign: 'center',
   },
 });

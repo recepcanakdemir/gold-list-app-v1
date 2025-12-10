@@ -141,6 +141,68 @@ export function usePageNumbers(notebookId: string) {
   })
 }
 
+// Get page title/context for a specific page
+export function usePageTitle(notebookId: string, pageNumber: number) {
+  return useQuery({
+    queryKey: ['pageTitle', notebookId, pageNumber],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('pages')
+        .select('title')
+        .eq('notebook_id', notebookId)
+        .eq('page_number', pageNumber)
+        .single()
+
+      if (error && error.code !== 'PGRST116') throw error
+      return data?.title || null
+    },
+  })
+}
+
+// Update page title/context
+export function useUpdatePageTitle() {
+  const queryClient = useQueryClient()
+  
+  return useMutation({
+    mutationFn: async ({ notebookId, pageNumber, title }: { notebookId: string, pageNumber: number, title: string }) => {
+      // First, check if page exists
+      const { data: existingPage } = await supabase
+        .from('pages')
+        .select('id')
+        .eq('notebook_id', notebookId)
+        .eq('page_number', pageNumber)
+        .single()
+
+      if (existingPage) {
+        // Update existing page
+        const { error } = await supabase
+          .from('pages')
+          .update({ title })
+          .eq('notebook_id', notebookId)
+          .eq('page_number', pageNumber)
+
+        if (error) throw error
+      } else {
+        // Create new page
+        const { error } = await supabase
+          .from('pages')
+          .insert({
+            notebook_id: notebookId,
+            page_number: pageNumber,
+            target_date: addDays(new Date(), pageNumber * 14).toISOString().split('T')[0],
+            title
+          })
+
+        if (error) throw error
+      }
+    },
+    onSuccess: (_, { notebookId, pageNumber }) => {
+      queryClient.invalidateQueries({ queryKey: ['pageTitle', notebookId, pageNumber] })
+      queryClient.invalidateQueries({ queryKey: ['pageNumbers', notebookId] })
+    },
+  })
+}
+
 // Words hooks
 export function useWords(pageId: string) {
   return useQuery({
@@ -174,6 +236,7 @@ export function getLanguageLevelDescription(level: string): string {
 // Mutations for creating data
 export function useCreateNotebook() {
   const queryClient = useQueryClient()
+  const { currentTime } = useCurrentTime()
 
   return useMutation({
     mutationFn: async (notebook: { 
@@ -194,6 +257,7 @@ export function useCreateNotebook() {
           target_language: notebook.target_language || 'English',
           language_level: notebook.language_level || 'A2',
           is_active: true,
+          created_at: currentTime.toISOString(),
         })
         .select()
         .single()
@@ -289,6 +353,43 @@ export function useCreateWord() {
       example_translation?: string
       next_review_date?: string
     }) => {
+      // Check word limit for free users
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) throw new Error('No authenticated user')
+
+      // Get current word count for user
+      const { data: wordCountData, error: countError } = await supabase
+        .from('words')
+        .select(`
+          id,
+          pages!inner(
+            notebook_id,
+            notebooks!inner(
+              user_id
+            )
+          )
+        `)
+        .eq('pages.notebooks.user_id', user.id)
+
+      if (countError) throw countError
+      
+      const currentWordCount = wordCountData?.length || 0
+      
+      // Check subscription status from profile
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('subscription_status')
+        .eq('id', user.id)
+        .single()
+
+      if (profileError) throw profileError
+      
+      const isProUser = profile.subscription_status === 'pro'
+      
+      // Enforce 300-word limit for free users
+      if (!isProUser && currentWordCount >= 300) {
+        throw new Error('WORD_LIMIT_REACHED')
+      }
       const { data, error } = await supabase
         .from('words')
         .insert({
@@ -319,6 +420,7 @@ export function useCreateWord() {
       
       if (pageData) {
         queryClient.invalidateQueries({ queryKey: ['notebookStats', pageData.notebook_id] })
+        queryClient.invalidateQueries({ queryKey: ['notebookStageStats', pageData.notebook_id] })
       }
 
       // Schedule next review notification
@@ -347,6 +449,44 @@ export function useCreateWordOptimistic() {
         example_translation?: string
       }
     }) => {
+      // Check word limit for free users
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) throw new Error('No authenticated user')
+
+      // Get current word count for user
+      const { data: wordCountData, error: countError } = await supabase
+        .from('words')
+        .select(`
+          id,
+          pages!inner(
+            notebook_id,
+            notebooks!inner(
+              user_id
+            )
+          )
+        `)
+        .eq('pages.notebooks.user_id', user.id)
+
+      if (countError) throw countError
+      
+      const currentWordCount = wordCountData?.length || 0
+      
+      // Check subscription status from profile
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('subscription_status')
+        .eq('id', user.id)
+        .single()
+
+      if (profileError) throw profileError
+      
+      const isProUser = profile.subscription_status === 'pro'
+      
+      // Enforce 300-word limit for free users
+      if (!isProUser && currentWordCount >= 300) {
+        throw new Error('WORD_LIMIT_REACHED')
+      }
+
       // Calculate 14-day review date using developer time system
       const reviewDate = addDays(params.currentTime, 14)
       
@@ -406,6 +546,7 @@ export function useCreateWordOptimistic() {
       queryClient.invalidateQueries({ queryKey: ['pageNumbers', data.page.notebook_id] })
       queryClient.invalidateQueries({ queryKey: ['wordsCount', data.page.notebook_id] })
       queryClient.invalidateQueries({ queryKey: ['notebookStats', data.page.notebook_id] })
+      queryClient.invalidateQueries({ queryKey: ['notebookStageStats', data.page.notebook_id] })
       queryClient.invalidateQueries({ queryKey: ['activityLog'] }) // Refresh activity heatmap
       queryClient.invalidateQueries({ queryKey: ['profile'] }) // Refresh streak counter
 
@@ -759,6 +900,7 @@ export function useUpdateWordReview() {
       
       if (pageData) {
         queryClient.invalidateQueries({ queryKey: ['notebookStats', pageData.notebook_id] })
+        queryClient.invalidateQueries({ queryKey: ['notebookStageStats', pageData.notebook_id] })
       }
 
       // Schedule next review notification
@@ -825,4 +967,85 @@ export function useWeeklyWordCounts() {
     staleTime: 1000 * 60 * 5, // 5 minutes cache
     refetchOnWindowFocus: false,
   })
+}
+
+// Total word count hook for subscription limits
+export function useTotalWordCount() {
+  return useQuery({
+    queryKey: ['totalWordCount'],
+    queryFn: async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return 0
+
+      const { data, error } = await supabase
+        .from('words')
+        .select(`
+          id,
+          pages!inner(
+            notebook_id,
+            notebooks!inner(
+              user_id
+            )
+          )
+        `)
+        .eq('pages.notebooks.user_id', user.id)
+
+      if (error) {
+        console.error('Failed to fetch total word count:', error)
+        return 0
+      }
+      
+      return data?.length || 0
+    },
+    staleTime: 1000 * 60 * 2, // 2 minutes cache
+    refetchOnWindowFocus: false,
+  })
+}
+
+// Notebook stage statistics hook
+export interface NotebookStageStats {
+  bronze: number;
+  silver: number;
+  gold: number;
+}
+
+export function useNotebookStageStats(notebookId: string) {
+  return useQuery({
+    queryKey: ['notebookStageStats', notebookId],
+    queryFn: async (): Promise<NotebookStageStats> => {
+      // First get all page IDs for this notebook
+      const { data: pages, error: pagesError } = await supabase
+        .from('pages')
+        .select('id')
+        .eq('notebook_id', notebookId);
+
+      if (pagesError) throw pagesError;
+      if (!pages || pages.length === 0) {
+        return { bronze: 0, silver: 0, gold: 0 };
+      }
+
+      // Get all words for these pages, excluding mastered words
+      const pageIds = pages.map(page => page.id);
+      const { data: words, error: wordsError } = await supabase
+        .from('words')
+        .select('stage')
+        .in('page_id', pageIds)
+        .neq('status', 'learned'); // Exclude mastered words
+
+      if (wordsError) throw wordsError;
+
+      // Count words by stage
+      const counts = { bronze: 0, silver: 0, gold: 0 };
+      words?.forEach(word => {
+        const stage = (word.stage as keyof typeof counts) || 'bronze';
+        if (stage in counts) {
+          counts[stage]++;
+        }
+      });
+
+      return counts;
+    },
+    staleTime: 1000 * 60 * 2, // 2 minutes cache
+    refetchOnWindowFocus: false,
+  });
 }

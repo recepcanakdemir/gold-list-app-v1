@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   StyleSheet, 
   Text, 
@@ -13,9 +13,77 @@ import {
 import { useRouter } from 'expo-router';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { supabase } from '../../lib/supabase';
-import { useNotebooks, useProfile, useNotebookStats, useNotebookButtonState, useWeeklyWordCounts } from '../../lib/database-hooks';
+import { useNotebooks, useProfile, useNotebookStats, useNotebookButtonState, useWeeklyWordCounts, useNotebookStageStats, NotebookStageStats } from '../../lib/database-hooks';
+import { useSubscription } from '../../lib/revenuecat';
 import { useCurrentTime } from '../../lib/time-provider';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Header } from '../../components/Header';
+
+// --- COMPONENT DEFINITIONS ---
+
+// StageCircle Component
+interface StageCircleProps {
+  stage: 'bronze' | 'silver' | 'gold';
+  count: number;
+  isUnlocked: boolean;
+}
+
+function StageCircle({ stage, count, isUnlocked }: StageCircleProps) {
+  const getStageStyles = () => {
+    if (!isUnlocked) {
+      // Locked state - gray with lock icon
+      return {
+        backgroundColor: '#D1D5DB',
+        borderColor: '#D1D5DB',
+      };
+    }
+    
+    // Unlocked state - stage colors
+    switch (stage) {
+      case 'bronze':
+        return {
+          backgroundColor: '#CD7F32',
+          borderColor: '#A0591C',
+        };
+      case 'silver':
+        return {
+          backgroundColor: '#C0C0C0',
+          borderColor: '#A0A0A0',
+        };
+      case 'gold':
+        return {
+          backgroundColor: '#FFD700',
+          borderColor: '#E6C200',
+        };
+      default:
+        return {
+          backgroundColor: '#D1D5DB',
+          borderColor: '#D1D5DB',
+        };
+    }
+  };
+
+  const stageStyle = getStageStyles();
+
+  return (
+    <View style={styles.badgeCircle}>
+      <View style={[
+        styles.badgeInner,
+        {
+          backgroundColor: stageStyle.backgroundColor,
+          borderColor: stageStyle.borderColor,
+          borderBottomColor: stageStyle.borderColor,
+        }
+      ]}>
+        {isUnlocked ? (
+          <Text style={styles.badgeNumber}>{count}</Text>
+        ) : (
+          <MaterialIcons name="lock" size={16} color="#FFF" />
+        )}
+      </View>
+    </View>
+  );
+}
 
 // --- HELPER FUNCTIONS ---
 
@@ -55,6 +123,75 @@ function getLanguageCountryCode(language: string): string {
 }
 
 // --- COMPONENTS ---
+
+// Custom hook to aggregate status across all notebooks
+function useNotebookStatusSummary() {
+  const { currentTime } = useCurrentTime();
+  const { data: notebooks } = useNotebooks();
+  
+  return useMemo(() => {
+    if (!notebooks || notebooks.length === 0) {
+      return { message: "Create your first notebook to get started", type: 'info' };
+    }
+    
+    // Simple message based on notebook count and time of day
+    const totalNotebooks = notebooks.length;
+    const hour = new Date(currentTime).getHours();
+    
+    if (hour < 12) {
+      return {
+        message: `Good morning! ${totalNotebooks} notebook${totalNotebooks > 1 ? 's' : ''} ready to go`,
+        type: 'add'
+      };
+    } else if (hour < 18) {
+      return {
+        message: `${totalNotebooks} notebook${totalNotebooks > 1 ? 's' : ''} waiting for your attention`,
+        type: 'review'
+      };
+    } else {
+      return {
+        message: `Evening study time! ${totalNotebooks} notebook${totalNotebooks > 1 ? 's' : ''} available`,
+        type: 'mixed'
+      };
+    }
+  }, [notebooks, currentTime]);
+}
+
+function StatusMessageCard() {
+  const statusSummary = useNotebookStatusSummary();
+  
+  const getBackgroundColor = () => {
+    switch (statusSummary.type) {
+      case 'review': return '#FFF5F5'; // Light red
+      case 'add': return '#FFF8F0'; // Light orange
+      case 'mixed': return '#FEF3C7'; // Light yellow
+      case 'done': return '#F0FDF4'; // Light green
+      default: return '#F8FAFC'; // Light gray
+    }
+  };
+  
+  const getBorderColor = () => {
+    switch (statusSummary.type) {
+      case 'review': return '#FEB2B2';
+      case 'add': return '#FED7AA';
+      case 'mixed': return '#FDE68A';
+      case 'done': return '#BBF7D0';
+      default: return '#E2E8F0';
+    }
+  };
+  
+  return (
+    <View style={[
+      styles.statusMessageCard,
+      { 
+        backgroundColor: getBackgroundColor(),
+        borderColor: getBorderColor(),
+      }
+    ]}>
+      <Text style={styles.statusMessageText}>{statusSummary.message}</Text>
+    </View>
+  );
+}
 
 function WeeklyProgressStrip() {
   const { currentTime } = useCurrentTime();
@@ -153,9 +290,17 @@ interface NotebookCardProps {
 }
 
 // --- DESIGN UPDATE: GAMIFIED CARD ---
-function NotebookCard({ notebook, stats, buttonState, onPress, onButtonPress }: NotebookCardProps) {
+function NotebookCard({ notebook, stats, buttonState, onPress, onButtonPress, stageStats }: NotebookCardProps & { stageStats?: NotebookStageStats }) {
   const totalWords = stats?.total || 0;
   const masteredWords = stats?.mastered || 0;
+
+  // Stage progression logic
+  const bronzeCount = stageStats?.bronze || 0;
+  const silverCount = stageStats?.silver || 0;
+  const goldCount = stageStats?.gold || 0;
+  
+  const isSilverUnlocked = silverCount > 0;
+  const isGoldUnlocked = goldCount > 0;
 
   // Button Colors based on state
   const getButtonStyles = () => {
@@ -178,26 +323,24 @@ function NotebookCard({ notebook, stats, buttonState, onPress, onButtonPress }: 
         {/* Top Row: Badges & Flag */}
         <View style={styles.topRow}>
           <View style={styles.badgeRowLeft}>
-            {/* Bronze Badge - Total Words */}
-            <View style={styles.badgeCircle}>
-              <View style={[styles.badgeInner, styles.bronzeBadge]}>
-                <Text style={styles.badgeNumber}>{totalWords}</Text>
-              </View>
-            </View>
+            {/* Dynamic Stage Circles */}
+            <StageCircle 
+              stage="bronze" 
+              count={bronzeCount} 
+              isUnlocked={true} // Bronze is always unlocked
+            />
             
-            {/* Silver Badge - Locked */}
-            <View style={styles.badgeCircle}>
-              <View style={[styles.badgeInner, styles.silverBadgeLocked]}>
-                <MaterialIcons name="lock" size={16} color="#FFF" />
-              </View>
-            </View>
+            <StageCircle 
+              stage="silver" 
+              count={silverCount} 
+              isUnlocked={isSilverUnlocked}
+            />
             
-            {/* Gold Badge - Locked */}
-            <View style={styles.badgeCircle}>
-              <View style={[styles.badgeInner, styles.goldBadgeLocked]}>
-                <MaterialIcons name="lock" size={16} color="#FFF" />
-              </View>
-            </View>
+            <StageCircle 
+              stage="gold" 
+              count={goldCount} 
+              isUnlocked={isGoldUnlocked}
+            />
           </View>
 
           {/* Country Flag */}
@@ -247,6 +390,7 @@ function NotebookCardWithStatsAndAction({
 }) {
   const { currentTime } = useCurrentTime();
   const { data: stats } = useNotebookStats(notebook.id);
+  const { data: stageStats } = useNotebookStageStats(notebook.id);
   const buttonState = useNotebookButtonState(notebook, currentTime);
   
   return (
@@ -254,6 +398,7 @@ function NotebookCardWithStatsAndAction({
       notebook={notebook}
       stats={stats}
       buttonState={buttonState}
+      stageStats={stageStats}
       onPress={onPress}
       onButtonPress={() => onButtonPress(buttonState)}
     />
@@ -275,11 +420,12 @@ function EmptyNotebooks({ onCreateNotebook }: { onCreateNotebook: () => void }) 
 export default function HomeScreen() {
   const [showDevMenu, setShowDevMenu] = useState(false);
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
+  const { isProUser, totalWordCount } = useSubscription();
   
   const { width: screenWidth } = Dimensions.get('window');
   
   const router = useRouter();
-  const { currentTime, addDay, resetToNow, isSimulated } = useCurrentTime();
+  const { currentTime, addDay, resetToNow, isSimulated, simulatedDays } = useCurrentTime();
   const { data: notebooks, isLoading } = useNotebooks();
   const { data: profile } = useProfile();
   
@@ -336,9 +482,7 @@ export default function HomeScreen() {
   if (isLoading) {
     return (
       <View style={styles.container}>
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Gold List</Text>
-        </View>
+        <Header title="Gold List" />
         <View style={styles.loadingContainer}>
           <Text style={styles.loadingText}>Loading...</Text>
         </View>
@@ -349,21 +493,33 @@ export default function HomeScreen() {
   return (
     <View style={styles.container}>
       {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Gold List</Text>
-        <View style={styles.streakContainer}>
-          <Text style={[
-            styles.streakText, 
-            streakStatus === 'pending' && styles.pendingStreakText,
-            streakStatus === 'broken' && styles.brokenStreakText
-          ]}>
-            {streakStatus === 'broken' ? '💔' : '🔥'} {displayStreak}
-          </Text>
-        </View>
-      </View>
+      <Header 
+        title="Gold List" 
+        showStreak={true}
+        streakValue={displayStreak}
+        streakStatus={streakStatus as 'completed' | 'pending' | 'broken'}
+        rightComponent={
+          <TouchableOpacity 
+            style={[styles.proButton, isProUser && styles.proButtonActive]}
+            onPress={() => router.push('/paywall')}
+          >
+            <Ionicons 
+              name={isProUser ? "diamond" : "diamond-outline"} 
+              size={20} 
+              color={isProUser ? "#FFD700" : "#FFA500"} 
+            />
+            {!isProUser && totalWordCount > 250 && (
+              <View style={styles.warningDot} />
+            )}
+          </TouchableOpacity>
+        }
+      />
 
       {/* Weekly Progress Strip */}
       <WeeklyProgressStrip />
+
+      {/* Status Message */}
+      <StatusMessageCard />
 
       {/* Notebooks List */}
       {notebooks && notebooks.length > 0 ? (
@@ -437,9 +593,14 @@ export default function HomeScreen() {
               <View style={styles.modalContent}>
                 <Text style={styles.modalTitle}>Developer Tools</Text>
                 {isSimulated && (
-                  <Text style={styles.simulatedTime}>
-                    Date: {currentTime.toLocaleDateString()}
-                  </Text>
+                  <>
+                    <Text style={styles.simulatedTime}>
+                      Date: {currentTime.toLocaleDateString()}
+                    </Text>
+                    <Text style={styles.simulatedTime}>
+                      Days Simulated: {simulatedDays +1}
+                    </Text>
+                  </>
                 )}
                 <TouchableOpacity style={styles.modalButton} onPress={addDay}>
                   <Text style={styles.modalButtonText}>Skip Day (+24h)</Text>
@@ -470,37 +631,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F7F7F7', // Biraz daha sıcak bir gri
   },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 24,
-    paddingTop: 60,
-    paddingBottom: 20,
-    backgroundColor: 'transparent',
-  },
-  headerTitle: {
-    fontSize: 28,
-    fontWeight: '800',
-    color: '#4B4B4B',
-    letterSpacing: -0.5,
-  },
-  streakContainer: {
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 2,
-    borderColor: '#E5E5E5',
-    borderBottomWidth: 4, // 3D effect
-  },
-  streakText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#4B4B4B',
-  },
-  brokenStreakText: { color: '#999', opacity: 0.7 },
-  pendingStreakText: { color: '#999', opacity: 0.6 },
   
   // WEEKLY STRIP
   weeklyProgressContainer: {
@@ -563,6 +693,27 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   dayLabelToday: { color: '#FFA500' },
+
+  // STATUS MESSAGE CARD
+  statusMessageCard: {
+    backgroundColor: 'white',
+    marginHorizontal: 20,
+    marginTop: 0,
+    marginBottom: 20,
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 2,
+    borderBottomWidth: 4, // 3D effect
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  statusMessageText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#4B4B4B',
+    textAlign: 'center',
+    letterSpacing: 0.2,
+  },
 
   // NOTEBOOKS
   notebooksContainer: {
@@ -751,5 +902,36 @@ const styles = StyleSheet.create({
   dangerButton: { backgroundColor: '#FF4444' },
   closeButton: { backgroundColor: '#666' },
   modalButtonText: { color: 'white', fontWeight: '600' },
-  simulatedTime: { marginBottom: 10, fontWeight: 'bold', color: '#FFA500' }
+  simulatedTime: { marginBottom: 10, fontWeight: 'bold', color: '#FFA500' },
+  
+  // PRO BUTTON STYLES
+  proButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#FFA500',
+    borderBottomWidth: 3,
+    borderBottomColor: '#D97706',
+    position: 'relative',
+  },
+  proButtonActive: {
+    backgroundColor: '#FFF9E6',
+    borderColor: '#FFD700',
+    borderBottomColor: '#E6C200',
+  },
+  warningDot: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#FF4444',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  }
 });
