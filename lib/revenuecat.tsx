@@ -4,6 +4,7 @@ import { Platform } from 'react-native'
 import Constants from 'expo-constants'
 import { supabase } from './supabase'
 import { useTotalWordCount } from './database-hooks'
+import { queryClient } from './query-client'
 
 // RevenueCat configuration - Replace with your actual API keys
 const REVENUECAT_API_KEY = Platform.select({
@@ -33,6 +34,55 @@ export const FREE_TIER_LIMITS = {
 // Development flags
 const IS_EXPO_GO = Constants.appOwnership === 'expo'
 const FORCE_PRO_IN_DEV = false // Set to true to test Pro features in development
+
+// Demo mode configuration
+const DEMO_EMAIL = "apple_review@goldlist.app";
+
+// Mock CustomerInfo for demo mode
+const createMockDemoCustomerInfo = (): CustomerInfo => ({
+  entitlements: {
+    active: {
+      [ENTITLEMENT_ID]: {
+        identifier: ENTITLEMENT_ID,
+        isActive: true,
+        willRenew: true,
+        periodType: 'MONTHLY' as any,
+        latestPurchaseDate: new Date().toISOString(),
+        expirationDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+        store: 'APP_STORE' as any,
+        productIdentifier: PRODUCT_IDS.MONTHLY,
+        isSandbox: false,
+        unsubscribeDetectedAt: null,
+        billingIssueDetectedAt: null,
+        originalPurchaseDate: new Date().toISOString(),
+        ownershipType: 'PURCHASED' as any
+      }
+    },
+    all: {}
+  },
+  activeSubscriptions: [PRODUCT_IDS.MONTHLY],
+  allPurchasedProductIdentifiers: [PRODUCT_IDS.MONTHLY],
+  latestExpirationDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+  firstSeen: new Date().toISOString(),
+  originalAppUserId: 'demo_user',
+  originalApplicationVersion: '1.0',
+  requestDate: new Date().toISOString(),
+  allExpirationDates: {},
+  allPurchaseDates: {},
+  originalPurchaseDates: {},
+  managementURL: null,
+  nonSubscriptionTransactions: []
+} as CustomerInfo);
+
+// Utility function to check if current user is demo user
+async function isDemoUser(): Promise<boolean> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    return user?.email === DEMO_EMAIL;
+  } catch {
+    return false;
+  }
+}
 
 interface SubscriptionContextType {
   subscriptionStatus: SubscriptionStatus
@@ -131,6 +181,15 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
   // Initialize RevenueCat
   useEffect(() => {
     const initializeRevenueCat = async () => {
+      // Check for demo user first
+      const isDemoMode = await isDemoUser();
+      if (isDemoMode) {
+        console.log('🎭 Demo mode activated for apple_review@goldlist.app');
+        setSubscriptionStatus('pro');
+        setCustomerInfo(createMockDemoCustomerInfo());
+        return;
+      }
+      
       // Skip RevenueCat initialization in Expo Go
       if (IS_EXPO_GO) {
         console.warn('RevenueCat disabled in Expo Go - using fallback subscription state')
@@ -162,9 +221,21 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
   // Listen for auth state changes to update user identifier
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      // Check for demo mode on any auth change
+      if (event === 'SIGNED_IN' && session?.user?.email === DEMO_EMAIL) {
+        console.log('🎭 Demo user signed in, activating Pro mode');
+        setSubscriptionStatus('pro');
+        setCustomerInfo(createMockDemoCustomerInfo());
+        return;
+      }
+      
       // Skip RevenueCat operations in Expo Go
       if (IS_EXPO_GO) {
         if (event === 'SIGNED_OUT') {
+          // Critical: Clear query cache to prevent data leakage between sessions
+          queryClient.clear()
+          // Also invalidate user cache ID to force re-fetch for new user
+          queryClient.invalidateQueries({ queryKey: ['userCacheId'] })
           setCustomerInfo(null)
           setSubscriptionStatus('free')
         }
@@ -185,6 +256,10 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
         }
       } else if (event === 'SIGNED_OUT') {
         try {
+          // Critical: Clear query cache to prevent data leakage between sessions
+          queryClient.clear()
+          // Also invalidate user cache ID to force re-fetch for new user
+          queryClient.invalidateQueries({ queryKey: ['userCacheId'] })
           await Purchases.logOut()
           setCustomerInfo(null)
           setSubscriptionStatus('free')
@@ -200,6 +275,15 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
 
   const refreshSubscription = async () => {
     try {
+      // Check for demo mode first
+      const isDemoMode = await isDemoUser();
+      if (isDemoMode) {
+        console.log('🎭 Demo mode: Forcing Pro status');
+        setSubscriptionStatus('pro');
+        setCustomerInfo(createMockDemoCustomerInfo());
+        return;
+      }
+      
       // Always fetch from database first as single source of truth
       const dbStatus = await getDatabaseStatus()
       

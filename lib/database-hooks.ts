@@ -3,6 +3,61 @@ import { useMemo } from 'react'
 import { supabase } from './supabase'
 import { addDays, useCurrentTime, daysBetween } from './time-provider'
 import { scheduleNextReviewNotification } from './notifications'
+import { 
+  mockProfile, 
+  mockNotebooks, 
+  mockWords, 
+  mockDashboardStats, 
+  mockWeeklyWordCounts, 
+  generateMockActivityLog, 
+  mockNotebookStats, 
+  mockNotebookStageStats, 
+  mockTotalWordCount,
+  mockOverdueWords,
+  mockWordsCountByPage,
+  mockPages
+} from '../app/utils/mockData'
+
+// Demo mode configuration for Apple Review - ONLY way to access mock data
+const DEMO_EMAIL = "apple_review@goldlist.app";
+
+// Utility function to check if current user is demo user
+async function isDemoUser(): Promise<boolean> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    return user?.email === DEMO_EMAIL;
+  } catch {
+    return false;
+  }
+}
+
+// Utility function to get user-specific cache identifier
+async function getUserCacheId(): Promise<string> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return 'anonymous';
+    
+    // Demo user gets special cache identifier
+    if (user.email === DEMO_EMAIL) {
+      return 'demo';
+    }
+    
+    // Regular users get their user ID
+    return user.id;
+  } catch {
+    return 'anonymous';
+  }
+}
+
+// Custom hook to get user cache ID for query keys
+function useUserCacheId() {
+  return useQuery({
+    queryKey: ['userCacheId'],
+    queryFn: getUserCacheId,
+    staleTime: Infinity, // Never goes stale until invalidated
+    refetchOnWindowFocus: false,
+  });
+}
 
 // Types based on our database schema
 export interface Profile {
@@ -53,9 +108,17 @@ export interface Word {
 
 // Profile hooks
 export function useProfile() {
+  const { data: cacheId } = useUserCacheId();
+  
   return useQuery({
-    queryKey: ['profile'],
+    queryKey: ['profile', cacheId],
     queryFn: async () => {
+      const isDemo = await isDemoUser();
+      
+      if (isDemo) {
+        return mockProfile;
+      }
+      
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('No authenticated user')
 
@@ -68,14 +131,23 @@ export function useProfile() {
       if (error) throw error
       return data as Profile
     },
+    enabled: !!cacheId, // Only run when we have the cache ID
   })
 }
 
 // Notebook hooks
 export function useNotebooks() {
+  const { data: cacheId } = useUserCacheId();
+  
   return useQuery({
-    queryKey: ['notebooks'],
+    queryKey: ['notebooks', cacheId],
     queryFn: async () => {
+      // Demo mode check
+      const isDemo = await isDemoUser();
+      if (isDemo) {
+        return mockNotebooks.filter(nb => nb.is_active);
+      }
+      
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('No authenticated user')
 
@@ -89,13 +161,26 @@ export function useNotebooks() {
       if (error) throw error
       return data as Notebook[]
     },
+    enabled: !!cacheId,
   })
 }
 
 export function useNotebook(notebookId: string) {
+  const { data: cacheId } = useUserCacheId();
+  
   return useQuery({
-    queryKey: ['notebook', notebookId],
+    queryKey: ['notebook', notebookId, cacheId],
     queryFn: async () => {
+      // Demo mode check
+      const isDemo = await isDemoUser();
+      if (isDemo) {
+        const notebook = mockNotebooks.find(nb => nb.id === notebookId)
+        if (!notebook) {
+          throw new Error('Mock notebook not found')
+        }
+        return notebook;
+      }
+      
       const { data, error } = await supabase
         .from('notebooks')
         .select('*')
@@ -105,6 +190,7 @@ export function useNotebook(notebookId: string) {
       if (error) throw error
       return data as Notebook
     },
+    enabled: !!cacheId,
   })
 }
 
@@ -130,6 +216,15 @@ export function usePageNumbers(notebookId: string) {
   return useQuery({
     queryKey: ['pageNumbers', notebookId],
     queryFn: async () => {
+      // Demo mode check
+      const isDemo = await isDemoUser();
+      if (isDemo) {
+        const pages = mockPages.filter(p => p.notebook_id === notebookId)
+        const pageNumbers = pages.map(p => p.page_number)
+        return pageNumbers;
+      }
+      
+      // Continue with existing logic
       const { data, error } = await supabase
         .from('pages')
         .select('page_number')
@@ -146,6 +241,13 @@ export function usePageTitle(notebookId: string, pageNumber: number) {
   return useQuery({
     queryKey: ['pageTitle', notebookId, pageNumber],
     queryFn: async () => {
+      // Demo mode check
+      const isDemo = await isDemoUser();
+      if (isDemo) {
+        const page = mockPages.find(p => p.notebook_id === notebookId && p.page_number === pageNumber)
+        return page?.title || null;
+      }
+      
       const { data, error } = await supabase
         .from('pages')
         .select('title')
@@ -208,6 +310,13 @@ export function useWords(pageId: string) {
   return useQuery({
     queryKey: ['words', pageId],
     queryFn: async () => {
+      // Demo mode check
+      const isDemo = await isDemoUser();
+      if (isDemo) {
+        return mockWords.filter(word => word.page_id === pageId);
+      }
+      
+      // Continue with existing Supabase logic
       const { data, error } = await supabase
         .from('words')
         .select('*')
@@ -567,6 +676,12 @@ export function useWordsCountByPage(notebookId: string) {
   return useQuery({
     queryKey: ['wordsCount', notebookId],
     queryFn: async () => {
+      // Demo mode check
+      const isDemo = await isDemoUser();
+      if (isDemo) {
+        return mockWordsCountByPage[notebookId] || {};
+      }
+      
       const { data, error } = await supabase
         .from('words')
         .select(`
@@ -597,6 +712,16 @@ export function useNotebookStats(notebookId: string) {
   return useQuery({
     queryKey: ['notebookStats', notebookId],
     queryFn: async () => {
+      // Demo mode check
+      const isDemo = await isDemoUser();
+      if (isDemo) {
+        const stats = mockNotebookStats[notebookId as keyof typeof mockNotebookStats]
+        if (stats) {
+          return { total: stats.total_words, mastered: Math.floor(stats.total_words * (stats.mastery_rate_percentage / 100)) };
+        }
+        return { total: 0, mastered: 0 };
+      }
+      
       const { data, error } = await supabase
         .from('words')
         .select(`
@@ -666,6 +791,13 @@ export function useActivityLog(daysBack: number = 365) {
   return useQuery({
     queryKey: ['activityLog', daysBack, currentTime.toDateString()],
     queryFn: async () => {
+      // Demo mode check
+      const isDemo = await isDemoUser();
+      if (isDemo) {
+        return generateMockActivityLog(daysBack).map(date => ({ date }));
+      }
+      
+      
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('No authenticated user')
 
@@ -757,6 +889,13 @@ export function useDashboardStats(period: 'Week' | 'Month') {
   return useQuery({
     queryKey: ['dashboardStats', period, currentTime.toDateString()], // Add currentTime to key
     queryFn: async () => {
+      // Demo mode check
+      const isDemo = await isDemoUser();
+      if (isDemo) {
+        return mockDashboardStats;
+      }
+      
+      // Continue with existing logic
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('No authenticated user')
 
@@ -789,6 +928,31 @@ export function useReviewWords(notebookId: string, currentTime: Date) {
   return useQuery({
     queryKey: ['reviewWords', notebookId, currentTime.toDateString()],
     queryFn: async () => {
+      // Demo mode check
+      const isDemo = await isDemoUser();
+      if (isDemo) {
+        // Filter overdue words by notebook and add pages data structure
+        const filteredWords = mockOverdueWords
+          .filter(word => {
+            // Find the page for this word and check if it belongs to the requested notebook
+            const page = mockPages.find(p => p.id === word.page_id)
+            return page?.notebook_id === notebookId
+          })
+          .map(word => {
+            // Find the page data to match expected structure
+            const page = mockPages.find(p => p.id === word.page_id)
+            return {
+              ...word,
+              pages: {
+                notebook_id: page?.notebook_id || notebookId,
+                page_number: page?.page_number || 1
+              }
+            }
+          })
+
+        return filteredWords;
+      }
+      
       const todayDate = currentTime.toISOString().split('T')[0]
       
       const { data, error } = await supabase
@@ -821,6 +985,26 @@ export function useUpdateWordReview() {
       currentTime: Date
     }) => {
       const { wordId, remembered, currentTime } = params
+      
+      // Demo mode check
+      const isDemo = await isDemoUser();
+      if (isDemo) {
+        // Find the mock word to simulate the update
+        const mockWord = mockOverdueWords.find(w => w.id === wordId) || mockWords.find(w => w.id === wordId)
+        if (!mockWord) {
+          throw new Error('Mock word not found')
+        }
+        
+        // Simulate word state update based on remembered/forgotten
+        const updatedWord = {
+          ...mockWord,
+          status: remembered ? 'learned' : 'ready',
+          next_review_date: remembered ? null : new Date(currentTime.getTime() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+          updated_at: currentTime.toISOString()
+        }
+        
+        return updatedWord
+      }
       
       // First, get current word state
       const { data: currentWord, error: fetchError } = await supabase
@@ -918,6 +1102,13 @@ export function useWeeklyWordCounts() {
   return useQuery({
     queryKey: ['weeklyWordCounts', currentTime.toDateString()],
     queryFn: async (): Promise<DailyWordCount[]> => {
+      // Demo mode check
+      const isDemo = await isDemoUser();
+      if (isDemo) {
+        return mockWeeklyWordCounts;
+      }
+      
+      // Continue with existing logic
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('No authenticated user')
 
@@ -971,9 +1162,17 @@ export function useWeeklyWordCounts() {
 
 // Total word count hook for subscription limits
 export function useTotalWordCount() {
+  const { data: cacheId } = useUserCacheId();
+  
   return useQuery({
-    queryKey: ['totalWordCount'],
+    queryKey: ['totalWordCount', cacheId],
     queryFn: async () => {
+      // Demo mode check
+      const isDemo = await isDemoUser();
+      if (isDemo) {
+        return mockTotalWordCount;
+      }
+      
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return 0
 
@@ -997,6 +1196,7 @@ export function useTotalWordCount() {
       
       return data?.length || 0
     },
+    enabled: !!cacheId,
     staleTime: 1000 * 60 * 2, // 2 minutes cache
     refetchOnWindowFocus: false,
   })
@@ -1013,6 +1213,17 @@ export function useNotebookStageStats(notebookId: string) {
   return useQuery({
     queryKey: ['notebookStageStats', notebookId],
     queryFn: async (): Promise<NotebookStageStats> => {
+      // Demo mode check
+      const isDemo = await isDemoUser();
+      if (isDemo) {
+        const stats = mockNotebookStageStats[notebookId as keyof typeof mockNotebookStageStats]
+        if (stats) {
+          return stats;
+        }
+        return { bronze: 0, silver: 0, gold: 0 };
+      }
+      
+      
       // First get all page IDs for this notebook
       const { data: pages, error: pagesError } = await supabase
         .from('pages')

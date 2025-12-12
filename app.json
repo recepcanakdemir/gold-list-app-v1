@@ -9,14 +9,17 @@
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/images/splashicon.png",
+      "image": "./assets/images/splash-last.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.recepsienen.goldlist-method",
-      "appleTeamId": "3WL9FYSV99"
+      "appleTeamId": "3WL9FYSV99",
+      "infoPlist": {
+    "ITSAppUsesNonExemptEncryption": false 
+  }
     },
     "android": {
       "package": "com.recepsienen.goldlist_method",

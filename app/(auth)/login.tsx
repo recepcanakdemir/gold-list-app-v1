@@ -156,6 +156,16 @@ export default function LoginScreen() {
             autoComplete="password"
           />
 
+          {/* Forgot Password Link - only show for sign in */}
+          {!isSignUp && (
+            <TouchableOpacity
+              style={styles.forgotPasswordButton}
+              onPress={() => router.push('/(auth)/forgot-password')}
+            >
+              <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
+            </TouchableOpacity>
+          )}
+
           <TouchableOpacity
             style={[styles.button, loading && styles.buttonDisabled]}
             onPress={handleAuth}
@@ -252,5 +262,16 @@ const styles = StyleSheet.create({
     ...Typography.body,
     color: Colors.primary,
     fontWeight: '500',
+  },
+  forgotPasswordButton: {
+    alignSelf: 'flex-end',
+    paddingVertical: Spacing.sm,
+    marginBottom: Spacing.lg,
+  },
+  forgotPasswordText: {
+    ...Typography.body,
+    color: Colors.primary,
+    fontWeight: '500',
+    fontSize: 14,
   },
 })

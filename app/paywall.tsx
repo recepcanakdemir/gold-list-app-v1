@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { View, Text, StyleSheet, Pressable, Alert, ActivityIndicator, Image } from 'react-native'
+import { View, Text, StyleSheet, Pressable, Alert, ActivityIndicator, Image, Linking } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
 import { Ionicons } from '@expo/vector-icons'
@@ -19,6 +19,34 @@ export default function PaywallScreen() {
   const [loading, setLoading] = useState(true)
   const [purchasing, setPurchasing] = useState(false)
   const [selectedPlan, setSelectedPlan] = useState<SubscriptionPlan>('weekly') // Default to weekly
+
+  const handlePrivacyPress = async () => {
+    try {
+      const url = 'https://diligent-chatter-bcf.notion.site/Gold-List-Privacy-Policy-2c5e917df771804193d8df89bb6b9843?pvs=73';
+      const supported = await Linking.canOpenURL(url);
+      if (supported) {
+        await Linking.openURL(url);
+      } else {
+        Alert.alert('Error', 'Unable to open Privacy Policy link');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Unable to open Privacy Policy');
+    }
+  }
+
+  const handleTermsPress = async () => {
+    try {
+      const url = 'https://www.apple.com/legal/internet-services/itunes/dev/stdeula/';
+      const supported = await Linking.canOpenURL(url);
+      if (supported) {
+        await Linking.openURL(url);
+      } else {
+        Alert.alert('Error', 'Unable to open Terms of Service link');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Unable to open Terms of Service');
+    }
+  }
 
   const isExpoGo = Constants.appOwnership === 'expo'
 
@@ -218,11 +246,11 @@ export default function PaywallScreen() {
           <Text style={styles.footerLink}>Restore</Text>
         </Pressable>
         <Text style={styles.footerSeparator}>|</Text>
-        <Pressable>
+        <Pressable onPress={handleTermsPress}>
           <Text style={styles.footerLink}>Terms</Text>
         </Pressable>
         <Text style={styles.footerSeparator}>|</Text>
-        <Pressable>
+        <Pressable onPress={handlePrivacyPress}>
           <Text style={styles.footerLink}>Privacy</Text>
         </Pressable>
       </View>

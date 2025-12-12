@@ -626,13 +626,6 @@ export default function NotebookDetailScreen() {
         }
       />
 
-      {/* Visual Debug Display for Time Simulation */}
-      <View style={{ padding: 10, backgroundColor: '#f0f8ff', alignItems: 'center' }}>
-        <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#333' }}>
-          📅 Sim Date: {currentTime.toDateString()}
-        </Text>
-      </View>
-
       {/* Sinusoidal Roadmap */}
       <ScrollView 
         ref={scrollViewRef}

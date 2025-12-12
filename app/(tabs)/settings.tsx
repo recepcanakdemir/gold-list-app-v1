@@ -6,15 +6,18 @@ import {
   ScrollView, 
   TouchableOpacity, 
   Alert,
-  Modal 
+  Modal,
+  Linking 
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../lib/supabase';
 import { useProfile } from '../../lib/database-hooks';
 import { useCurrentTime } from '../../lib/time-provider';
+import { queryClient } from '../../lib/query-client';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors, Spacing, BorderRadius, Typography, Effects3D, CommonStyles, ButtonStyles } from '../../styles/theme';
 import { Header } from '../../components/Header';
+import { SettingsProBanner } from '../../components/SettingsProBanner';
 
 interface SettingItemProps {
   icon: string;
@@ -62,7 +65,19 @@ function SettingSection({ title, children }: SettingSectionProps) {
 export default function SettingsScreen() {
   const [showDevMenu, setShowDevMenu] = useState(false);
   const { data: profile } = useProfile();
-  const { currentTime, addDay, resetToNow, isSimulated } = useCurrentTime();
+  const { currentTime, addDay, resetToNow, isSimulated, simulatedDays } = useCurrentTime();
+  
+  const handleDevSignOut = async () => {
+    try {
+      setShowDevMenu(false);
+      // Critical: Clear query cache to prevent data leakage between sessions
+      queryClient.clear();
+      await AsyncStorage.clear();
+      await supabase.auth.signOut();
+    } catch (error) {
+      console.error('Sign out error:', error);
+    }
+  };
 
   const handleSignOut = async () => {
     Alert.alert(
@@ -74,6 +89,8 @@ export default function SettingsScreen() {
           text: 'Sign Out', 
           style: 'destructive',
           onPress: async () => {
+            // Critical: Clear query cache to prevent data leakage between sessions
+            queryClient.clear();
             await supabase.auth.signOut();
           }
         }
@@ -81,28 +98,6 @@ export default function SettingsScreen() {
     );
   };
 
-  const handleClearStorage = async () => {
-    Alert.alert(
-      'Clear Storage',
-      'This will clear all local data and sign you out. Are you sure?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Clear', 
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await AsyncStorage.clear();
-              await supabase.auth.signOut();
-              Alert.alert('Success', 'All data cleared successfully');
-            } catch (e) {
-              Alert.alert('Error', 'Failed to clear storage');
-            }
-          }
-        }
-      ]
-    );
-  };
 
   const handleAbout = () => {
     Alert.alert(
@@ -112,12 +107,32 @@ export default function SettingsScreen() {
     );
   };
 
-  const handleHelp = () => {
-    Alert.alert(
-      'Help & Support',
-      'For help and support, please visit our documentation or contact support.',
-      [{ text: 'OK' }]
-    );
+  const handleHelp = async () => {
+    try {
+      const email = 'landmarkaiguide@gmail.com';
+      const subject = 'Gold List App Support Request';
+      const body = 'Hello,\n\nI need help with the Gold List app.\n\nPlease describe your issue:\n\n';
+      
+      const mailtoUrl = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+      
+      const supported = await Linking.canOpenURL(mailtoUrl);
+      if (supported) {
+        await Linking.openURL(mailtoUrl);
+      } else {
+        Alert.alert(
+          'Email Support',
+          `Please contact us at: ${email}\n\nOr copy this email address to your preferred email app.`,
+          [
+            { text: 'OK', style: 'default' }
+          ]
+        );
+      }
+    } catch (error) {
+      Alert.alert(
+        'Email Support', 
+        'Please contact us at: landmarkaiguide@gmail.com'
+      );
+    }
   };
 
   const handleNotifications = () => {
@@ -128,12 +143,32 @@ export default function SettingsScreen() {
     Alert.alert('Language', 'Language selection coming soon!');
   };
 
-  const handlePrivacy = () => {
-    Alert.alert('Privacy Policy', 'Privacy policy coming soon!');
+  const handlePrivacy = async () => {
+    try {
+      const url = 'https://diligent-chatter-bcf.notion.site/Gold-List-Privacy-Policy-2c5e917df771804193d8df89bb6b9843?pvs=73';
+      const supported = await Linking.canOpenURL(url);
+      if (supported) {
+        await Linking.openURL(url);
+      } else {
+        Alert.alert('Error', 'Unable to open Privacy Policy link');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Unable to open Privacy Policy');
+    }
   };
 
-  const handleTerms = () => {
-    Alert.alert('Terms of Service', 'Terms of service coming soon!');
+  const handleTerms = async () => {
+    try {
+      const url = 'https://www.apple.com/legal/internet-services/itunes/dev/stdeula/';
+      const supported = await Linking.canOpenURL(url);
+      if (supported) {
+        await Linking.openURL(url);
+      } else {
+        Alert.alert('Error', 'Unable to open Terms of Service link');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Unable to open Terms of Service');
+    }
   };
 
   return (
@@ -148,6 +183,9 @@ export default function SettingsScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
+        {/* Pro Banner */}
+        <SettingsProBanner />
+
         {/* Account Section */}
         <SettingSection title="Account">
           <SettingItem
@@ -191,13 +229,6 @@ export default function SettingsScreen() {
             onPress={handleSignOut}
             showChevron={false}
           />
-          <SettingItem
-            icon="trash"
-            title="Clear All Data"
-            subtitle="Remove all local data"
-            onPress={handleClearStorage}
-            showChevron={false}
-          />
         </SettingSection>
 
         {/* Developer Section - Only in DEV mode */}
@@ -213,15 +244,6 @@ export default function SettingsScreen() {
         )}
       </ScrollView>
 
-      {/* Developer Menu Button (Only visible in DEV) - Quick access */}
-      {__DEV__ && (
-        <TouchableOpacity 
-          style={styles.devButton}
-          onPress={() => setShowDevMenu(true)}
-        >
-          <Text style={styles.devButtonText}>🔧 Dev</Text>
-        </TouchableOpacity>
-      )}
 
       {/* Developer Menu Modal */}
       {__DEV__ && (
@@ -236,17 +258,26 @@ export default function SettingsScreen() {
               <Text style={styles.modalTitle}>Developer Tools</Text>
 
               {isSimulated && (
-                <Text style={styles.simulatedTime}>
-                  Simulated: {currentTime.toLocaleDateString()}
-                </Text>
+                <>
+                  <Text style={styles.simulatedTime}>
+                    Date: {currentTime.toLocaleDateString()}
+                  </Text>
+                  <Text style={styles.simulatedTime}>
+                    Days Simulated: {simulatedDays + 1}
+                  </Text>
+                </>
               )}
 
               <TouchableOpacity style={styles.modalButton} onPress={addDay}>
-                <Text style={styles.modalButtonText}>+1 Day</Text>
+                <Text style={styles.modalButtonText}>Skip Day (+24h)</Text>
               </TouchableOpacity>
 
               <TouchableOpacity style={styles.modalButton} onPress={resetToNow}>
-                <Text style={styles.modalButtonText}>Reset Time</Text>
+                <Text style={styles.modalButtonText}>Reset Date</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={[styles.modalButton, styles.dangerButton]} onPress={handleDevSignOut}>
+                <Text style={styles.modalButtonText}>Sign Out</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -363,6 +394,9 @@ const styles = StyleSheet.create({
   closeButton: {
     marginTop: 10,
     backgroundColor: '#FFA500',
+  },
+  dangerButton: {
+    backgroundColor: '#FF4444',
   },
   modalButtonText: {
     fontSize: 16,

@@ -10,6 +10,7 @@ import {
   PanResponder,
   Modal,
   FlatList,
+  ScrollView,
 } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -602,6 +603,18 @@ export default function ReviewScreen() {
     const totalReviewed = sessionStats.remembered + sessionStats.forgotten;
     const successRate = totalReviewed > 0 ? Math.round((sessionStats.remembered / totalReviewed) * 100) : 0;
     
+    // Calculate number of active stages for responsive spacing
+    const activeStages = ['bronze', 'silver', 'gold'].filter(stage => {
+      const rounds = [1, 2, 3, 4];
+      const stageRounds = rounds.some(round => {
+        const key = `${stage}-${round}`;
+        return sessionStats.stageRoundStats[key];
+      });
+      return stageRounds;
+    });
+    const stageCount = activeStages.length;
+    const isCompactMode = stageCount >= 2;
+    
     // Helper function to render stage-round progress bars
     const renderStageRounds = (stage: string, emoji: string) => {
       const rounds = [1, 2, 3, 4];
@@ -617,7 +630,10 @@ export default function ReviewScreen() {
       if (stageRounds.length === 0) return null;
       
       return (
-        <View key={stage} style={styles.stageSection}>
+        <View key={stage} style={[
+          styles.stageSection,
+          isCompactMode ? styles.compactStageSpacing : null
+        ]}>
           <View style={styles.stageHeader}>
             <Text style={styles.stageEmoji}>{emoji}</Text>
             <Text style={styles.stageTitle}>{stage.toUpperCase()}</Text>
@@ -658,18 +674,28 @@ export default function ReviewScreen() {
             }
           />
           
-          <View style={styles.newSummaryContainer}>
+          <ScrollView 
+            style={styles.newSummaryScrollView}
+            contentContainerStyle={styles.newSummaryContainer}
+            showsVerticalScrollIndicator={false}
+          >
             {/* Congrats Message */}
-            <Text style={styles.newSummaryTitle}>🎉 Great Job!</Text>
+            <Text style={[
+              styles.newSummaryTitle,
+              isCompactMode ? styles.compactTitleSpacing : styles.normalTitleSpacing
+            ]}>🎉 Great Job!</Text>
             
             {/* Overall Score Circle */}
-            <View style={styles.overallScoreSection}>
+            <View style={[
+              styles.overallScoreSection,
+              isCompactMode ? styles.compactSectionSpacing : styles.normalSectionSpacing
+            ]}>
               <CircularProgress
                 percentage={successRate}
-                size={120}
-                strokeWidth={8}
+                size={isCompactMode ? 100 : 120}
+                strokeWidth={isCompactMode ? 6 : 8}
                 color={successRate >= 70 ? '#4CAF50' : successRate >= 50 ? '#FF9800' : '#F44336'}
-                textSize={18}
+                textSize={isCompactMode ? 16 : 18}
               />
               <Text style={styles.overallScoreLabel}>
                 {sessionStats.remembered}/{totalReviewed} words mastered
@@ -677,7 +703,10 @@ export default function ReviewScreen() {
             </View>
             
             {/* Stage-Round Breakdown */}
-            <View style={styles.stageBreakdownSection}>
+            <View style={[
+              styles.stageBreakdownSection,
+              isCompactMode ? styles.compactSectionSpacing : styles.normalSectionSpacing
+            ]}>
               {renderStageRounds('bronze', '🥉')}
               {renderStageRounds('silver', '🥈')}
               {renderStageRounds('gold', '🥇')}
@@ -708,7 +737,7 @@ export default function ReviewScreen() {
                 <Text style={styles.newActionButtonText}>Back to Notebook</Text>
               </TouchableOpacity>
             </View>
-          </View>
+          </ScrollView>
         </SafeAreaView>
         
         {/* Word List Modals */}
@@ -1265,20 +1294,34 @@ const styles = StyleSheet.create({
   },
   
   // New Summary Page Styles
-  newSummaryContainer: {
+  newSummaryScrollView: {
     flex: 1,
+  },
+  newSummaryContainer: {
     padding: Spacing.xl,
+    paddingBottom: Spacing.xxxl, // Extra bottom padding for scroll
     backgroundColor: Colors.background,
   },
   newSummaryTitle: {
     ...Typography.headerLarge,
     textAlign: 'center',
-    marginBottom: Spacing.xxxl,
     color: Colors.textPrimary,
+  },
+  // Responsive spacing styles
+  normalTitleSpacing: {
+    marginBottom: Spacing.xxxl,
+  },
+  compactTitleSpacing: {
+    marginBottom: Spacing.xxl,
   },
   overallScoreSection: {
     alignItems: 'center',
+  },
+  normalSectionSpacing: {
     marginBottom: Spacing.xxxl,
+  },
+  compactSectionSpacing: {
+    marginBottom: Spacing.lg,
   },
   overallScoreLabel: {
     ...Typography.titleMedium,
@@ -1287,10 +1330,13 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   stageBreakdownSection: {
-    marginBottom: Spacing.xxxl,
+    // Spacing handled dynamically by compactSectionSpacing/normalSectionSpacing
   },
   stageSection: {
     marginBottom: Spacing.xl,
+  },
+  compactStageSpacing: {
+    marginBottom: Spacing.md,
   },
   stageHeader: {
     flexDirection: 'row',

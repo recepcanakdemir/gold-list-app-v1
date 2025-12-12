@@ -61,15 +61,20 @@ export function Header({
       </View>
 
       <View style={styles.rightElement}>
-        {showStreak ? (
-          <View style={styles.streakContainer}>
-            <Text style={getStreakTextStyle()}>
-              {getStreakEmoji()} {streakValue}
-            </Text>
-          </View>
-        ) : (
-          rightElement && rightElement
-        )}
+        <View style={styles.rightContent}>
+          {rightElement && (
+            <View style={styles.rightElementContainer}>
+              {rightElement}
+            </View>
+          )}
+          {showStreak && (
+            <View style={styles.streakContainer}>
+              <Text style={getStreakTextStyle()}>
+                {getStreakEmoji()} {streakValue}
+              </Text>
+            </View>
+          )}
+        </View>
       </View>
     </View>
   );
@@ -96,6 +101,14 @@ const styles = StyleSheet.create({
   },
   rightElement: {
     minWidth: 40,
+    alignItems: 'flex-end',
+  },
+  rightContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  rightElementContainer: {
     alignItems: 'flex-end',
   },
   streakContainer: {

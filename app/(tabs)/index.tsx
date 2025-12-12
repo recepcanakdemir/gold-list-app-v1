@@ -18,6 +18,7 @@ import { useSubscription } from '../../lib/revenuecat';
 import { useCurrentTime } from '../../lib/time-provider';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Header } from '../../components/Header';
+import { HeaderProButton } from '../../components/HeaderProButton';
 
 // --- COMPONENT DEFINITIONS ---
 
@@ -418,14 +419,13 @@ function EmptyNotebooks({ onCreateNotebook }: { onCreateNotebook: () => void }) 
 }
 
 export default function HomeScreen() {
-  const [showDevMenu, setShowDevMenu] = useState(false);
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const { isProUser, totalWordCount } = useSubscription();
   
   const { width: screenWidth } = Dimensions.get('window');
+  const { currentTime } = useCurrentTime();
   
   const router = useRouter();
-  const { currentTime, addDay, resetToNow, isSimulated, simulatedDays } = useCurrentTime();
   const { data: notebooks, isLoading } = useNotebooks();
   const { data: profile } = useProfile();
   
@@ -434,9 +434,6 @@ export default function HomeScreen() {
   const displayStreak = streakInfo.streak;
   const streakStatus = streakInfo.status;
 
-  const handleSignOut = async () => {
-    await supabase.auth.signOut();
-  };
 
   const handleClearStorage = async () => {
     try {
@@ -482,7 +479,7 @@ export default function HomeScreen() {
   if (isLoading) {
     return (
       <View style={styles.container}>
-        <Header title="Gold List" />
+        <Header title="Gold List" rightElement={<HeaderProButton />} />
         <View style={styles.loadingContainer}>
           <Text style={styles.loadingText}>Loading...</Text>
         </View>
@@ -498,21 +495,7 @@ export default function HomeScreen() {
         showStreak={true}
         streakValue={displayStreak}
         streakStatus={streakStatus as 'completed' | 'pending' | 'broken'}
-        rightComponent={
-          <TouchableOpacity 
-            style={[styles.proButton, isProUser && styles.proButtonActive]}
-            onPress={() => router.push('/paywall')}
-          >
-            <Ionicons 
-              name={isProUser ? "diamond" : "diamond-outline"} 
-              size={20} 
-              color={isProUser ? "#FFD700" : "#FFA500"} 
-            />
-            {!isProUser && totalWordCount > 250 && (
-              <View style={styles.warningDot} />
-            )}
-          </TouchableOpacity>
-        }
+        rightElement={<HeaderProButton />}
       />
 
       {/* Weekly Progress Strip */}
@@ -573,55 +556,6 @@ export default function HomeScreen() {
       </TouchableOpacity>
 
 
-      {/* Developer Menu */}
-      {__DEV__ && (
-        <>
-          <TouchableOpacity
-            style={styles.devButton}
-            onPress={() => setShowDevMenu(true)}
-          >
-            <Text style={styles.devButtonText}>🔧</Text>
-          </TouchableOpacity>
-
-          <Modal
-            visible={showDevMenu}
-            transparent={true}
-            animationType="fade"
-            onRequestClose={() => setShowDevMenu(false)}
-          >
-            <View style={styles.modalOverlay}>
-              <View style={styles.modalContent}>
-                <Text style={styles.modalTitle}>Developer Tools</Text>
-                {isSimulated && (
-                  <>
-                    <Text style={styles.simulatedTime}>
-                      Date: {currentTime.toLocaleDateString()}
-                    </Text>
-                    <Text style={styles.simulatedTime}>
-                      Days Simulated: {simulatedDays +1}
-                    </Text>
-                  </>
-                )}
-                <TouchableOpacity style={styles.modalButton} onPress={addDay}>
-                  <Text style={styles.modalButtonText}>Skip Day (+24h)</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.modalButton} onPress={resetToNow}>
-                  <Text style={styles.modalButtonText}>Reset Date</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.modalButton, styles.dangerButton]} onPress={handleSignOut}>
-                  <Text style={styles.modalButtonText}>Sign Out</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.modalButton, styles.closeButton]}
-                  onPress={() => setShowDevMenu(false)}
-                >
-                  <Text style={styles.modalButtonText}>Close</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </Modal>
-        </>
-      )}
     </View>
   );
 }
@@ -890,19 +824,6 @@ const styles = StyleSheet.create({
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   loadingText: { fontSize: 16, fontWeight: '700', color: '#AFAFAF' },
   spacer: { height: 100 },
-  devButton: { position: 'absolute', bottom: 110, left: 24, backgroundColor: '#333', width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
-  devButtonText: { fontSize: 20 },
-  modalButton: {
-    padding: 16,
-    borderRadius: 8,
-    alignItems: 'center',
-    backgroundColor: '#FFA500',
-    marginVertical: 4,
-  },
-  dangerButton: { backgroundColor: '#FF4444' },
-  closeButton: { backgroundColor: '#666' },
-  modalButtonText: { color: 'white', fontWeight: '600' },
-  simulatedTime: { marginBottom: 10, fontWeight: 'bold', color: '#FFA500' },
   
   // PRO BUTTON STYLES
   proButton: {

@@ -6,6 +6,7 @@ import { useCurrentTime } from '../../lib/time-provider';
 import Svg, { Circle } from 'react-native-svg';
 import { Colors, Spacing, BorderRadius, Typography, Effects3D, CommonStyles, ButtonStyles } from '../../styles/theme';
 import { Header } from '../../components/Header';
+import { HeaderProButton } from '../../components/HeaderProButton';
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
@@ -280,6 +281,7 @@ export default function DashboardScreen() {
         showStreak={true}
         streakValue={currentStreak}
         streakStatus={streakStatus as 'completed' | 'pending' | 'broken'}
+        rightElement={<HeaderProButton />}
       />
       
       <ScrollView 
@@ -413,12 +415,6 @@ export default function DashboardScreen() {
       </View>
       </ScrollView>
 
-      {/* Developer Menu Button (Only visible in DEV) */}
-      {__DEV__ && (
-        <TouchableOpacity style={styles.devButton}>
-          <Text style={styles.devButtonText}>🔧 Dev</Text>
-        </TouchableOpacity>
-      )}
     </View>
   );
 }
