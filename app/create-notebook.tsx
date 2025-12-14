@@ -19,6 +19,7 @@ import { Header } from '../components/Header';
 
 // Language data with country codes for flags
 const LANGUAGES = [
+  { code: 'en', name: 'English', countryCode: 'GB' },
   { code: 'es', name: 'Spanish', countryCode: 'ES' },
   { code: 'fr', name: 'French', countryCode: 'FR' },
   { code: 'de', name: 'German', countryCode: 'DE' },
